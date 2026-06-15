@@ -1,0 +1,413 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String             @id @default(uuid())
+  email               String             @unique
+  username            String             @unique
+  passwordHash        String             @map("password_hash")
+  avatarUrl           String?            @map("avatar_url")
+  role                UserRole           @default(free)
+  isVerified          Boolean            @default(false) @map("is_verified")
+  verifyToken         String?            @map("verify_token")
+  verify_token_expiry DateTime?          @db.DateTime(0)
+  resetToken          String?            @map("reset_token")
+  resetTokenExp       DateTime?          @map("reset_token_exp")
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
+  exchangeAccounts    ExchangeAccount[]
+  ibReferrals         IBReferral[]
+  comments            JournalComment[]
+  likes               JournalLike[]
+  journals            Journal[]
+  notifications       Notification[]
+  payments            Payment[]
+  refreshTokens       RefreshToken[]
+  subscriptions       UserSubscription[]
+  watchlists          Watchlist[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique @db.VarChar(512)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "refresh_tokens_user_id_fkey")
+  @@map("refresh_tokens")
+}
+
+model MembershipPlan {
+  id            String             @id @default(uuid())
+  name          String
+  slug          String             @unique
+  description   String?            @db.Text
+  priceMonthly  Decimal            @map("price_monthly") @db.Decimal(12, 2)
+  priceYearly   Decimal            @map("price_yearly") @db.Decimal(12, 2)
+  features      Json
+  isActive      Boolean            @default(true) @map("is_active")
+  sortOrder     Int                @default(0) @map("sort_order")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  subscriptions UserSubscription[]
+
+  @@map("membership_plans")
+}
+
+model UserSubscription {
+  id           String             @id @default(uuid())
+  userId       String             @map("user_id")
+  planId       String             @map("plan_id")
+  status       SubscriptionStatus @default(trial)
+  billingCycle BillingCycle       @map("billing_cycle")
+  startDate    DateTime           @map("start_date")
+  endDate      DateTime           @map("end_date")
+  trialEndsAt  DateTime?          @map("trial_ends_at")
+  cancelledAt  DateTime?          @map("cancelled_at")
+  autoRenew    Boolean            @default(true) @map("auto_renew")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  payments     Payment[]
+  plan         MembershipPlan     @relation(fields: [planId], references: [id])
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([planId], map: "user_subscriptions_plan_id_fkey")
+  @@index([userId], map: "user_subscriptions_user_id_fkey")
+  @@map("user_subscriptions")
+}
+
+model Payment {
+  id               String            @id @default(uuid())
+  userId           String            @map("user_id")
+  subscriptionId   String?           @map("subscription_id")
+  invoiceNumber    String            @unique @map("invoice_number")
+  amount           Decimal           @db.Decimal(12, 2)
+  currency         String            @default("IDR")
+  status           PaymentStatus     @default(pending)
+  paymentMethod    String?           @map("payment_method")
+  xenditInvoiceId  String?           @map("xendit_invoice_id")
+  xenditPaymentUrl String?           @map("xendit_payment_url") @db.VarChar(1000)
+  xenditResponse   Json?             @map("xendit_response")
+  paidAt           DateTime?         @map("paid_at")
+  expiredAt        DateTime?         @map("expired_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  subscription     UserSubscription? @relation(fields: [subscriptionId], references: [id])
+  user             User              @relation(fields: [userId], references: [id])
+
+  @@index([subscriptionId], map: "payments_subscription_id_fkey")
+  @@index([userId], map: "payments_user_id_fkey")
+  @@map("payments")
+}
+
+model Instrument {
+  id             String         @id @default(uuid())
+  symbol         String         @unique
+  name           String
+  type           InstrumentType
+  baseCurrency   String         @map("base_currency")
+  quoteCurrency  String         @map("quote_currency")
+  pipSize        Decimal?       @map("pip_size") @db.Decimal(10, 8)
+  lotSize        Decimal?       @map("lot_size") @db.Decimal(20, 8)
+  contractSize   Decimal?       @map("contract_size") @db.Decimal(20, 8)
+  marginRequired Decimal?       @map("margin_required") @db.Decimal(10, 4)
+  isActive       Boolean        @default(true) @map("is_active")
+  exchange       String?
+  metadata       Json?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  trades         JournalTrade[]
+
+  @@index([type])
+  @@index([symbol])
+  @@map("instruments")
+}
+
+model ExchangeAccount {
+  id             String           @id @default(uuid())
+  userId         String           @map("user_id")
+  platform       TradePlatform
+  accountName    String           @map("account_name")
+  accountId      String?          @map("account_id")
+  apiKey         String?          @map("api_key") @db.VarChar(500)
+  apiSecret      String?          @map("api_secret") @db.VarChar(500)
+  apiPassphrase  String?          @map("api_passphrase") @db.VarChar(500)
+  serverName     String?          @map("server_name")
+  loginNumber    String?          @map("login_number")
+  isReadOnly     Boolean          @default(true) @map("is_read_only")
+  status         ConnectionStatus @default(pending)
+  lastSyncAt     DateTime?        @map("last_sync_at")
+  lastSyncStatus String?          @map("last_sync_status")
+  autoSync       Boolean          @default(false) @map("auto_sync")
+  syncInterval   Int              @default(60) @map("sync_interval")
+  metadata       Json?
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trades         JournalTrade[]
+
+  @@unique([userId, platform, accountId])
+  @@index([userId])
+  @@index([platform])
+  @@map("exchange_accounts")
+}
+
+model Journal {
+  id             String            @id @default(uuid())
+  userId         String            @map("user_id")
+  title          String
+  content        String            @db.LongText
+  visibility     JournalVisibility @default(private)
+  isPinned       Boolean           @default(false) @map("is_pinned")
+  tags           Json
+  instrumentType InstrumentType?   @map("instrument_type")
+  viewCount      Int               @default(0) @map("view_count")
+  publishedAt    DateTime?         @map("published_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  comments       JournalComment[]
+  likes          JournalLike[]
+  trades         JournalTrade[]
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([visibility])
+  @@index([instrumentType])
+  @@index([createdAt])
+  @@fulltext([title, content])
+  @@map("journals")
+}
+
+model JournalTrade {
+  id                String           @id @default(uuid())
+  journalId         String           @map("journal_id")
+  instrumentId      String?          @map("instrument_id")
+  exchangeAccountId String?          @map("exchange_account_id")
+  externalTradeId   String?          @map("external_trade_id")
+  instrumentType    InstrumentType   @map("instrument_type")
+  symbol            String
+  symbolName        String           @map("symbol_name")
+  baseCurrency      String           @map("base_currency")
+  quoteCurrency     String           @map("quote_currency")
+  exchange          String?
+  tradeType         TradeType        @map("trade_type")
+  entryPrice        Decimal          @map("entry_price") @db.Decimal(20, 8)
+  exitPrice         Decimal?         @map("exit_price") @db.Decimal(20, 8)
+  quantity          Decimal          @db.Decimal(20, 8)
+  lotSize           Decimal?         @map("lot_size") @db.Decimal(20, 8)
+  leverage          Int?
+  pipValue          Decimal?         @map("pip_value") @db.Decimal(20, 8)
+  pipCount          Decimal?         @map("pip_count") @db.Decimal(10, 2)
+  spread            Decimal?         @db.Decimal(10, 2)
+  commission        Decimal?         @db.Decimal(20, 8)
+  swap              Decimal?         @db.Decimal(20, 8)
+  stopLoss          Decimal?         @map("stop_loss") @db.Decimal(20, 8)
+  takeProfit        Decimal?         @map("take_profit") @db.Decimal(20, 8)
+  riskAmount        Decimal?         @map("risk_amount") @db.Decimal(20, 8)
+  riskPercent       Decimal?         @map("risk_percent") @db.Decimal(10, 4)
+  pnlAmount         Decimal?         @map("pnl_amount") @db.Decimal(20, 8)
+  pnlAmountIdr      Decimal?         @map("pnl_amount_idr") @db.Decimal(20, 2)
+  pnlPercent        Decimal?         @map("pnl_percent") @db.Decimal(10, 4)
+  pnlPips           Decimal?         @map("pnl_pips") @db.Decimal(10, 2)
+  status            TradeStatus      @default(open)
+  platform          TradePlatform    @default(manual)
+  tradeDate         DateTime         @map("trade_date")
+  closeDate         DateTime?        @map("close_date")
+  notes             String?          @db.Text
+  screenshotUrl     String?          @map("screenshot_url") @db.VarChar(1000)
+  tags              Json
+  rawData           Json?            @map("raw_data")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  exchangeAccount   ExchangeAccount? @relation(fields: [exchangeAccountId], references: [id])
+  instrument        Instrument?      @relation(fields: [instrumentId], references: [id])
+  journal           Journal          @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
+  @@index([instrumentType])
+  @@index([symbol])
+  @@index([status])
+  @@index([tradeDate])
+  @@index([platform])
+  @@index([exchangeAccountId])
+  @@index([instrumentId], map: "journal_trades_instrument_id_fkey")
+  @@map("journal_trades")
+}
+
+model IBReferral {
+  id              String   @id @default(uuid())
+  ibUserId        String   @map("ib_user_id")
+  referredUserId  String   @map("referred_user_id")
+  referralCode    String   @map("referral_code")
+  platform        String   @default("mifx")
+  status          String   @default("pending")
+  clientAccount   String?  @map("client_account")
+  totalVolume     Decimal  @default(0.00000000) @map("total_volume") @db.Decimal(20, 8)
+  totalCommission Decimal  @default(0.00000000) @map("total_commission") @db.Decimal(20, 8)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  ibUser          User     @relation(fields: [ibUserId], references: [id])
+
+  @@unique([ibUserId, referredUserId, platform])
+  @@index([ibUserId])
+  @@index([referralCode])
+  @@map("ib_referrals")
+}
+
+model JournalComment {
+  id        String           @id @default(uuid())
+  journalId String           @map("journal_id")
+  userId    String           @map("user_id")
+  parentId  String?          @map("parent_id")
+  content   String           @db.Text
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+  journal   Journal          @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  parent    JournalComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   JournalComment[] @relation("CommentReplies")
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@index([journalId], map: "journal_comments_journal_id_fkey")
+  @@index([parentId], map: "journal_comments_parent_id_fkey")
+  @@index([userId], map: "journal_comments_user_id_fkey")
+  @@map("journal_comments")
+}
+
+model JournalLike {
+  id        String   @id @default(uuid())
+  journalId String   @map("journal_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  journal   Journal  @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([journalId, userId])
+  @@index([userId], map: "journal_likes_user_id_fkey")
+  @@map("journal_likes")
+}
+
+model Watchlist {
+  id        String          @id @default(uuid())
+  userId    String          @map("user_id")
+  name      String
+  isDefault Boolean         @default(false) @map("is_default")
+  createdAt DateTime        @default(now()) @map("created_at")
+  items     WatchlistItem[]
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "watchlists_user_id_fkey")
+  @@map("watchlists")
+}
+
+model WatchlistItem {
+  id             String         @id @default(uuid())
+  watchlistId    String         @map("watchlist_id")
+  symbol         String
+  symbolName     String         @map("symbol_name")
+  instrumentType InstrumentType @default(crypto) @map("instrument_type")
+  alertPriceHigh Decimal?       @map("alert_price_high") @db.Decimal(20, 8)
+  alertPriceLow  Decimal?       @map("alert_price_low") @db.Decimal(20, 8)
+  sortOrder      Int            @default(0) @map("sort_order")
+  addedAt        DateTime       @default(now()) @map("added_at")
+  watchlist      Watchlist      @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, symbol])
+  @@map("watchlist_items")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  title     String
+  message   String    @db.Text
+  data      Json?
+  isRead    Boolean   @default(false) @map("is_read")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "notifications_user_id_fkey")
+  @@map("notifications")
+}
+
+enum UserRole {
+  free
+  member
+  admin
+}
+
+enum SubscriptionStatus {
+  trial
+  active
+  expired
+  cancelled
+}
+
+enum BillingCycle {
+  monthly
+  yearly
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+  expired
+}
+
+enum TradeType {
+  long
+  short
+  buy
+  sell
+}
+
+enum TradeStatus {
+  open
+  closed
+  cancelled
+}
+
+enum JournalVisibility {
+  private
+  public
+  members_only
+}
+
+enum InstrumentType {
+  crypto
+  forex
+  commodity
+  index
+  stock
+  crypto_futures
+}
+
+enum TradePlatform {
+  manual
+  mt4
+  mt5
+  binance
+  indodax
+  tokocrypto
+  triv
+  floq
+  mifx
+  csv_import
+}
+
+enum ConnectionStatus {
+  active
+  inactive
+  error
+  pending
+}

@@ -1,0 +1,49 @@
+{
+  "name": "crypto-journal-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "setup:db": "node scripts/setup-db.js",
+    "studio": "npx prisma studio",
+    "seed": "node prisma/seed.js",
+    "prisma:generate": "npx prisma generate",
+    "prisma:push": "npx prisma db push",
+    "prisma:migrate": "npx prisma migrate dev",
+    "prisma:reset": "npx prisma migrate reset"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@prisma/client": "^6.19.3",
+    "@sparticuz/chromium": "^148.0.0",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.4.1",
+    "express-validator": "^7.3.2",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
+    "nodemailer": "^8.0.11",
+    "pdfkit": "^0.15.0",
+    "prisma": "^6.19.3",
+    "puppeteer-core": "^24.42.0",
+    "uuid": "^14.0.0",
+    "ws": "^8.16.0",
+    "xendit-node": "^7.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  }
+}
