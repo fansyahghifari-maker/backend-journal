@@ -114,7 +114,7 @@ model Instrument {
   type           InstrumentType
   baseCurrency   String         @map("base_currency")
   quoteCurrency  String         @map("quote_currency")
-  pipSize        Decimal?       pipSize Decimal @db.Decimal(18, 8) @map("pip_size")
+  pipSize        Decimal?       @db.Decimal(18, 8) @map("pip_size")
   lotSize        Decimal?       @map("lot_size") @db.Decimal(20, 8)
   contractSize   Decimal?       @map("contract_size") @db.Decimal(20, 8)
   marginRequired Decimal?       @map("margin_required") @db.Decimal(10, 4)
