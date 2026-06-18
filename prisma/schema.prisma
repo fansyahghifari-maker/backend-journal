@@ -15,12 +15,12 @@ model User {
   avatarUrl           String?            @map("avatar_url")
   role                UserRole           @default(free)
   isVerified          Boolean            @default(false) @map("is_verified")
-  verifyToken         String?            @map("verify_token")
-  verify_token_expiry DateTime?          @db.DateTime(0)
+  verifyToken         String?            @db.VarChar(255) @map("verify_token")
   resetToken          String?            @map("reset_token")
   resetTokenExp       DateTime?          @map("reset_token_exp")
   createdAt           DateTime           @default(now()) @map("created_at")
   updatedAt           DateTime           @updatedAt @map("updated_at")
+  verifyTokenExpire   DateTime?            @map("verify_token_expire")
   exchangeAccounts    ExchangeAccount[]
   ibReferrals         IBReferral[]
   comments            JournalComment[]
@@ -114,7 +114,7 @@ model Instrument {
   type           InstrumentType
   baseCurrency   String         @map("base_currency")
   quoteCurrency  String         @map("quote_currency")
-  pipSize        Decimal?       @map("pip_size") @db.Decimal(10, 8)
+  pipSize        Decimal?       pipSize Decimal @db.Decimal(18, 8) @map("pip_size")
   lotSize        Decimal?       @map("lot_size") @db.Decimal(20, 8)
   contractSize   Decimal?       @map("contract_size") @db.Decimal(20, 8)
   marginRequired Decimal?       @map("margin_required") @db.Decimal(10, 4)
