@@ -35,7 +35,7 @@ const authenticate = async (req, res, next) => {
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
-      return unauthorized(res, 'Access token expired');
+      return res.status(401).json({ success: false, message: 'Token tidak valid' })
     }
     if (err.name === 'JsonWebTokenError') {
       return unauthorized(res, 'Invalid access token');
