@@ -170,9 +170,9 @@ const fetchNewsDataCrypto = async ({ coin = '', sentiment = '', page = null } = 
       publishedAt: item.pubDate,
       sentiment:   item.sentiment || 'neutral',
       imageUrl:    item.image_url || null,
-      currencies:  item.coin ? [item.coin.toUpperCase()] : [],
+      currencies: Array.isArray(item.coin) ? item.coin.map(c => c.toUpperCase()) : [],
       categories:  ['crypto'],
-      tags:        item.coin ? [item.coin.toUpperCase()] : [],
+      tags:        Array.isArray(item.coin) ? item.coin.map(c => c.toUpperCase()) : [],
     }))
 
     setCache(cacheKey, results)
