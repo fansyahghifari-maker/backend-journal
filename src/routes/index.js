@@ -11,6 +11,7 @@ router.use('/advanced',    require('./advanced.routes'))
 router.use('/instruments', require('./instrument.routes'))
 router.use('/exchanges',   require('./exchange.routes'))
 router.use('/market',      require('./price.routes'))
+router.use('/news', require('./news.routes'))
 router.use('/calculator',  require('./riskCalculator.routes'))
 router.use('/calendar',    require('./calendar.routes'))
 
