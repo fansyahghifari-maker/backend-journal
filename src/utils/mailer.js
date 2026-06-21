@@ -16,7 +16,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'
 
 // Setup transporter Gmail SMTP
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // pakai port 465 wajib true
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
