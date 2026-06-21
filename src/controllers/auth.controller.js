@@ -71,12 +71,13 @@ const logoutAll = async (req, res) => {
 const verifyEmail = async (req, res) => {
   try {
     await authService.verifyEmail(req.params.token)
-    return success(res, null, 'Email berhasil diverifikasi! Silakan login.')
+    // Langsung alihkan browser user ke halaman login frontend Vercel lu setelah sukses verifikasi
+    return res.redirect('https://crpt-journaling-build.vercel.app/login')
   } catch (err) {
-    return error(res, err.message, err.status || 400)
+    // Jika eror atau token kedaluwarsa, arahkan ke halaman login dengan query parameter eror agar frontend bisa baca
+    return res.redirect('https://crpt-journaling-build.vercel.app/login?error=token_invalid')
   }
 }
-
 // RESEND VERIFICATION - Kirim Ulang Email Verifikasi jika Expired
 const resendVerification = async (req, res) => {
   try {

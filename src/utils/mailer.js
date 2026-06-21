@@ -12,7 +12,7 @@
 const nodemailer = require('nodemailer')
 
 const APP_NAME    = 'Corex Journal'
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://crpt-journaling-build.vercel.app/login'
 
 // Setup transporter Gmail SMTP
 const transporter = nodemailer.createTransport({
