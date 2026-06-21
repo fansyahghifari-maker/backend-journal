@@ -7,7 +7,6 @@ const SALT_ROUNDS = 12
 
 // REGISTER
 const register = async ({ email, username, password }) => {
-  // Cek duplikat email dan username dalam satu query paralel
   const [emailExists, usernameExists] = await Promise.all([
     prisma.user.findUnique({ where: { email } }),
     prisma.user.findUnique({ where: { username } }),
@@ -15,29 +14,33 @@ const register = async ({ email, username, password }) => {
   if (emailExists)    throw { status: 409, message: 'Email sudah terdaftar.' }
   if (usernameExists) throw { status: 409, message: 'Username sudah dipakai.' }
 
-  const passwordHash  = await bcrypt.hash(password, SALT_ROUNDS)
-  const verifyToken   = crypto.randomBytes(32).toString('hex')
+  const passwordHash        = await bcrypt.hash(password, SALT_ROUNDS)
+  const verifyToken         = crypto.randomBytes(32).toString('hex')
+  const verifyTokenExpire   = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 jam
 
-  // Buat user + default watchlist dalam satu transaction
   const user = await prisma.$transaction(async (tx) => {
     const newUser = await tx.user.create({
-      data: { email, username, passwordHash, verifyToken },
+      data: {
+        email,
+        username,
+        passwordHash,
+        verifyToken,
+        verifyTokenExpire,   // ← TAMBAH INI
+      },
       select: { id:true, email:true, username:true, role:true, createdAt:true },
     })
 
-    // Auto-buat watchlist default untuk user baru
     await tx.watchlist.create({
       data: { userId: newUser.id, name: 'Watchlist Utama', isDefault: true },
     })
 
-    // Buat notifikasi selamat datang
     await tx.notification.create({
       data: {
-        userId: newUser.id,
-        type: 'welcome',
-        title: 'Selamat datang di CryptoJournal! 🎉',
-        message: 'Akun kamu sudah berhasil dibuat. Mulai catat trading journey kamu sekarang.',
-        data: { action: 'explore' },
+        userId:  newUser.id,
+        type:    'welcome',
+        title:   'Selamat datang di Corex Journal! 🎉',
+        message: 'Akun kamu sudah berhasil dibuat. Cek email untuk verifikasi akun.',
+        data:    { action: 'verify_email' },
       },
     })
 
@@ -46,6 +49,7 @@ const register = async ({ email, username, password }) => {
 
   return { user, verifyToken }
 }
+
 
 // LOGIN
 const login = async ({ email, password, userAgent, ip }) => {
@@ -136,12 +140,26 @@ const logoutAll = async (userId) => {
 
 // VERIFY EMAIL
 const verifyEmail = async (token) => {
-  const user = await prisma.user.findFirst({ where: { verifyToken: token } })
+  const user = await prisma.user.findFirst({
+    where: { verifyToken: token },
+  })
+
   if (!user) throw { status: 400, message: 'Token verifikasi tidak valid atau sudah dipakai.' }
+
+  // Cek apakah token sudah expired
+  if (user.verifyTokenExpire && user.verifyTokenExpire < new Date()) {
+    throw { status: 400, message: 'Token verifikasi sudah kadaluarsa. Minta kirim ulang email verifikasi.' }
+  }
+
+  if (user.isVerified) throw { status: 400, message: 'Email sudah diverifikasi sebelumnya.' }
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { isVerified: true, verifyToken: null },
+    data: {
+      isVerified:         true,
+      verifyToken:        null,
+      verifyTokenExpire:  null,  // ← hapus token setelah verify
+    },
   })
 }
 
@@ -181,4 +199,22 @@ const resetPassword = async (token, newPassword) => {
   ])
 }
 
-module.exports = { register, login, refreshTokens, logout, logoutAll, verifyEmail, forgotPassword, resetPassword }
+// TAMBAH fungsi resendVerification
+const resendVerification = async (email) => {
+  const user = await prisma.user.findUnique({ where: { email } })
+
+  // Jangan reveal apakah email terdaftar atau tidak
+  if (!user || user.isVerified) return null
+
+  const verifyToken       = crypto.randomBytes(32).toString('hex')
+  const verifyTokenExpire = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 jam
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data:  { verifyToken, verifyTokenExpire },
+  })
+
+  return { user, verifyToken }
+}
+
+module.exports = { register, login, refreshTokens, logout, logoutAll, verifyEmail, forgotPassword, resendVerification, resetPassword }

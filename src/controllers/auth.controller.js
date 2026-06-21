@@ -1,11 +1,19 @@
 const authService = require('../services/auth.service')
 const { success, error } = require('../utils/response')
+const { sendVerificationEmail, sendResetPasswordEmail } = require('../utils/mailer')
 
 const register = async (req, res) => {
   try {
     const { user, verifyToken } = await authService.register(req.body)
-    // TODO: kirim email verifikasi dengan verifyToken
-    return success(res, { user }, 'Registrasi berhasil! Cek email untuk verifikasi akun.', 201)
+
+    // Kirim email verifikasi via Resend
+    await sendVerificationEmail({
+      to:       user.email,
+      username: user.username,
+      token:    verifyToken,
+    })
+
+    return success(res, { user }, 'Registrasi berhasil! Cek email kamu untuk verifikasi akun.', 201)
   } catch (err) {
     return error(res, err.message, err.status || 500)
   }
@@ -57,16 +65,46 @@ const logoutAll = async (req, res) => {
 const verifyEmail = async (req, res) => {
   try {
     await authService.verifyEmail(req.params.token)
-    return success(res, null, 'Email berhasil diverifikasi. Silakan login.')
+    return success(res, null, 'Email berhasil diverifikasi! Silakan login.')
   } catch (err) {
     return error(res, err.message, err.status || 400)
+  }
+}
+
+// Resend verifikasi email (kalau token expired atau email tidak masuk)
+const resendVerification = async (req, res) => {
+  try {
+    const { email } = req.body
+    if (!email) return error(res, 'Email dibutuhkan.', 400)
+
+    const result = await authService.resendVerification(email)
+    if (!result) return success(res, null, 'Jika email terdaftar dan belum diverifikasi, email verifikasi sudah dikirim ulang.')
+
+    await sendVerificationEmail({
+      to:       result.user.email,
+      username: result.user.username,
+      token:    result.verifyToken,
+    })
+
+    return success(res, null, 'Email verifikasi berhasil dikirim ulang. Cek inbox kamu.')
+  } catch (err) {
+    return error(res, err.message, err.status || 500)
   }
 }
 
 const forgotPassword = async (req, res) => {
   try {
     const result = await authService.forgotPassword(req.body.email)
-    // TODO: kirim email reset dengan result.resetToken
+
+    // Kirim email reset password via Resend
+    if (result) {
+      await sendResetPasswordEmail({
+        to:       result.user.email,
+        username: result.user.username,
+        token:    result.resetToken,
+      })
+    }
+
     // Selalu return success — jangan reveal apakah email ada atau tidak
     return success(res, null, 'Jika email terdaftar, link reset password sudah dikirim.')
   } catch (err) {
@@ -91,4 +129,15 @@ const getMe = async (req, res) => {
   }
 }
 
-module.exports = { register, login, refresh, logout, logoutAll, verifyEmail, forgotPassword, resetPassword, getMe }
+module.exports = {
+  register,
+  login,
+  refresh,
+  logout,
+  logoutAll,
+  verifyEmail,
+  resendVerification,
+  forgotPassword,
+  resetPassword,
+  getMe,
+}
