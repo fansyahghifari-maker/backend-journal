@@ -2,11 +2,12 @@ const authService = require('../services/auth.service')
 const { success, error } = require('../utils/response')
 const { sendVerificationEmail, sendResetPasswordEmail } = require('../utils/mailer')
 
+// REGISTER - Pendaftaran User Baru
 const register = async (req, res) => {
   try {
     const { user, verifyToken } = await authService.register(req.body)
 
-    // Kirim email verifikasi via Resend
+    // Kirim email verifikasi via Nodemailer (Gmail SMTP)
     await sendVerificationEmail({
       to:       user.email,
       username: user.username,
@@ -19,6 +20,7 @@ const register = async (req, res) => {
   }
 }
 
+// LOGIN
 const login = async (req, res) => {
   try {
     const result = await authService.login({
@@ -32,6 +34,7 @@ const login = async (req, res) => {
   }
 }
 
+// REFRESH TOKEN
 const refresh = async (req, res) => {
   try {
     const { refreshToken } = req.body
@@ -43,6 +46,7 @@ const refresh = async (req, res) => {
   }
 }
 
+// LOGOUT
 const logout = async (req, res) => {
   try {
     const { refreshToken } = req.body
@@ -53,6 +57,7 @@ const logout = async (req, res) => {
   }
 }
 
+// LOGOUT ALL DEVICES
 const logoutAll = async (req, res) => {
   try {
     await authService.logoutAll(req.user.id)
@@ -62,6 +67,7 @@ const logoutAll = async (req, res) => {
   }
 }
 
+// VERIFY EMAIL - Validasi Token dari Klik Email User
 const verifyEmail = async (req, res) => {
   try {
     await authService.verifyEmail(req.params.token)
@@ -71,7 +77,7 @@ const verifyEmail = async (req, res) => {
   }
 }
 
-// Resend verifikasi email (kalau token expired atau email tidak masuk)
+// RESEND VERIFICATION - Kirim Ulang Email Verifikasi jika Expired
 const resendVerification = async (req, res) => {
   try {
     const { email } = req.body
@@ -80,6 +86,7 @@ const resendVerification = async (req, res) => {
     const result = await authService.resendVerification(email)
     if (!result) return success(res, null, 'Jika email terdaftar dan belum diverifikasi, email verifikasi sudah dikirim ulang.')
 
+    // Kirim ulang via Nodemailer (Gmail SMTP)
     await sendVerificationEmail({
       to:       result.user.email,
       username: result.user.username,
@@ -92,11 +99,12 @@ const resendVerification = async (req, res) => {
   }
 }
 
+// FORGOT PASSWORD - Request Link Reset Password
 const forgotPassword = async (req, res) => {
   try {
     const result = await authService.forgotPassword(req.body.email)
 
-    // Kirim email reset password via Resend
+    // Kirim email reset password via Nodemailer (Gmail SMTP)
     if (result) {
       await sendResetPasswordEmail({
         to:       result.user.email,
@@ -105,13 +113,14 @@ const forgotPassword = async (req, res) => {
       })
     }
 
-    // Selalu return success — jangan reveal apakah email ada atau tidak
+    // Selalu return success demi keamanan (mencegah user enumeration)
     return success(res, null, 'Jika email terdaftar, link reset password sudah dikirim.')
   } catch (err) {
     return error(res, 'Gagal memproses request.', 500)
   }
 }
 
+// RESET PASSWORD - Setup Password Baru
 const resetPassword = async (req, res) => {
   try {
     await authService.resetPassword(req.params.token, req.body.password)
@@ -121,6 +130,7 @@ const resetPassword = async (req, res) => {
   }
 }
 
+// GET ME - Ambil Data User Berdasarkan Token yang Valid
 const getMe = async (req, res) => {
   try {
     return success(res, { user: req.user }, 'Data user berhasil diambil.')

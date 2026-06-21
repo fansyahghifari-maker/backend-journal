@@ -1,27 +1,38 @@
 /**
- * MAILER UTILITY — pakai Resend.com
- * Install dulu: npm install resend
+ * MAILER UTILITY — pakai Nodemailer + Gmail SMTP
+ * Gratis, bisa kirim ke semua email
+ * Install: npm install nodemailer
+ * 
+ * Setup Gmail App Password:
+ * 1. Google Account → Security → 2-Step Verification (aktifkan)
+ * 2. Security → App Passwords → buat baru
+ * 3. Copy password ke .env: GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
  */
 
-const { Resend } = require('resend')
+const nodemailer = require('nodemailer')
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-
-// Ganti dengan domain kamu setelah verifikasi domain di Resend
-// Kalau belum punya domain, pakai onboarding@resend.dev (hanya bisa kirim ke email sendiri)
-const FROM_EMAIL = process.env.FROM_EMAIL || 'onboarding@resend.dev'
-const APP_NAME   = 'Corex Journal'
+const APP_NAME    = 'Corex Journal'
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'
+
+// Setup transporter Gmail SMTP
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+})
 
 // ─── KIRIM EMAIL VERIFIKASI ───────────────────────────────────────────────────
 const sendVerificationEmail = async ({ to, username, token }) => {
   const verifyUrl = `${FRONTEND_URL}/verify-email?token=${token}`
 
-  const { data, error } = await resend.emails.send({
-    from:    FROM_EMAIL,
-    to:      [to],
-    subject: `Verifikasi Email Kamu — ${APP_NAME}`,
-    html: `
+  try {
+    const info = await transporter.sendMail({
+      from:    `"${APP_NAME}" <${process.env.GMAIL_USER}>`,
+      to,
+      subject: `Verifikasi Email Kamu — ${APP_NAME}`,
+      html: `
 <!DOCTYPE html>
 <html>
 <head>
@@ -89,27 +100,28 @@ const sendVerificationEmail = async ({ to, username, token }) => {
   </div>
 </body>
 </html>
-    `,
-  })
+      `,
+    })
 
-  if (error) {
-    console.error('[MAILER] sendVerificationEmail error:', error)
+    console.log('[MAILER] Verification email sent:', info.messageId)
+    return info
+
+  } catch (err) {
+    console.error('[MAILER] sendVerificationEmail error:', err.message)
     throw new Error('Gagal mengirim email verifikasi.')
   }
-
-  console.log('[MAILER] Verification email sent:', data?.id)
-  return data
 }
 
 // ─── KIRIM EMAIL RESET PASSWORD ───────────────────────────────────────────────
 const sendResetPasswordEmail = async ({ to, username, token }) => {
   const resetUrl = `${FRONTEND_URL}/reset-password?token=${token}`
 
-  const { data, error } = await resend.emails.send({
-    from:    FROM_EMAIL,
-    to:      [to],
-    subject: `Reset Password — ${APP_NAME}`,
-    html: `
+  try {
+    const info = await transporter.sendMail({
+      from:    `"${APP_NAME}" <${process.env.GMAIL_USER}>`,
+      to,
+      subject: `Reset Password — ${APP_NAME}`,
+      html: `
 <!DOCTYPE html>
 <html>
 <head>
@@ -171,16 +183,16 @@ const sendResetPasswordEmail = async ({ to, username, token }) => {
   </div>
 </body>
 </html>
-    `,
-  })
+      `,
+    })
 
-  if (error) {
-    console.error('[MAILER] sendResetPasswordEmail error:', error)
+    console.log('[MAILER] Reset password email sent:', info.messageId)
+    return info
+
+  } catch (err) {
+    console.error('[MAILER] sendResetPasswordEmail error:', err.message)
     throw new Error('Gagal mengirim email reset password.')
   }
-
-  console.log('[MAILER] Reset password email sent:', data?.id)
-  return data
 }
 
 module.exports = { sendVerificationEmail, sendResetPasswordEmail }
