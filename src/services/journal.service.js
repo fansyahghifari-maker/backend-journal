@@ -123,7 +123,7 @@ const getMyJournals = async (userId, query) => {
       ],
       include: {
         user:   { select: { id: true, username: true, avatarUrl: true } },
-        trades: { select: { id: true, coinSymbol: true, tradeType: true, pnlAmount: true, pnlPercent: true, status: true } },
+        trades: { select: { id: true, symbol: true, tradeType: true, pnlAmount: true, pnlPercent: true, status: true } },
         _count: { select: { likes: true, comments: true } },
       },
     }),
@@ -169,8 +169,8 @@ const getPublicFeed = async (viewerUserId, query) => {
   }
   if (tag) where.tags = { path: '$', array_contains: tag }
   if (coinSymbol) {
-    where.trades = { some: { coinSymbol: { equals: coinSymbol.toUpperCase() } } }
-  }
+  where.trades = { some: { symbol: { equals: coinSymbol.toUpperCase() } } }
+}
 
   const [journals, total] = await Promise.all([
     prisma.journal.findMany({
@@ -180,7 +180,7 @@ const getPublicFeed = async (viewerUserId, query) => {
       orderBy: { publishedAt: 'desc' },
       include: {
         user:   { select: { id: true, username: true, avatarUrl: true } },
-        trades: { select: { id: true, coinSymbol: true, tradeType: true, pnlPercent: true, status: true } },
+        trades: { select: { id: true, symbol: true, tradeType: true, pnlPercent: true, status: true } },
         _count: { select: { likes: true, comments: true } },
       },
     }),
