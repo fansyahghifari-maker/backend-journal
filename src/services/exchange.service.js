@@ -25,14 +25,17 @@ const decrypt = (text) => {
 
 // CEK AKSES FITUR EXCHANGE
 const assertAccess = async (userId) => {
-  const sub = await prisma.userSubscription.findFirst({
-    where: { userId, status: 'active', endDate: { gt: new Date() } },
-    include: { plan: true },
-  })
-  const feat = (sub?.plan?.features || []).find(f => f.key === 'exchange_connect')
-  if (!feat || !feat.value) {
-    throw { status: 403, message: 'Koneksi exchange hanya tersedia di paket Pro dan Elite. Upgrade untuk menggunakan fitur ini.' }
-  }
+  // TEMPORARY: bypass subscription check for testing
+  return true
+
+  // const sub = await prisma.userSubscription.findFirst({
+  //   where: { userId, status: 'active', endDate: { gt: new Date() } },
+  //   include: { plan: true },
+  // })
+  // const feat = (sub?.plan?.features || []).find(f => f.key === 'exchange_connect')
+  // if (!feat || !feat.value) {
+  //   throw { status: 403, message: 'Koneksi exchange hanya tersedia di paket Pro dan Elite. Upgrade untuk menggunakan fitur ini.' }
+  // }
 }
 
 // GET DECRYPTED CREDENTIALS
