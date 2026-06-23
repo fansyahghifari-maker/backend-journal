@@ -16,7 +16,8 @@ const tokoFetch = async (endpoint, params, apiKey, apiSecret) => {
   const res  = await fetch(url, { headers: { 'X-MBX-APIKEY': apiKey } })
   const data = await res.json()
 
-  if (!res.ok || data.code !== undefined) {
+  // Tokocrypto: code 0 = sukses. code lain (atau tidak ok) = error.
+  if (!res.ok || (data.code !== undefined && data.code !== 0)) {
     throw { status: 400, message: `Tokocrypto: ${data.msg || data.message || 'Request gagal'}` }
   }
   return data
@@ -76,10 +77,11 @@ const getBalance = async (apiKey, apiSecret) => {
 //  DETECT TRADED SYMBOLS
 const detectTradedSymbols = async (apiKey, apiSecret) => {
   const popularPairs = [
-    'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
-    'ADAUSDT','DOGEUSDT','MATICUSDT','LTCUSDT','LINKUSDT',
-    'BTCIDR', 'ETHIDR',  'BNBIDR',  'SOLIDR',
-  ]
+  'BTC_USDT','ETH_USDT','BNB_USDT','SOL_USDT','XRP_USDT',
+  'ADA_USDT','DOGE_USDT','MATIC_USDT','LTC_USDT','LINK_USDT',
+  'BTC_IDR', 'ETH_IDR',  'BNB_IDR',  'SOL_IDR',
+  'TKO_IDR', 'TKO_USDT',
+]
 
   const traded = []
   for (const sym of popularPairs) {
