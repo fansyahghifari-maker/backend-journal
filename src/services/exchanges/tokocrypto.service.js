@@ -16,7 +16,7 @@ const tokoFetch = async (endpoint, params, apiKey, apiSecret) => {
   const res  = await fetch(url, { headers: { 'X-MBX-APIKEY': apiKey } })
   const data = await res.json()
 
-  // Tokocrypto: code 0 = sukses. code lain (atau tidak ok) = error.
+  // Tokocrypto: code 0 = sukses, code selain 0 = error
   if (!res.ok || (data.code !== undefined && data.code !== 0)) {
     throw { status: 400, message: `Tokocrypto: ${data.msg || data.message || 'Request gagal'}` }
   }
@@ -27,7 +27,8 @@ const tokoFetch = async (endpoint, params, apiKey, apiSecret) => {
 const testConnection = async (apiKey, apiSecret) => {
   const data = await tokoFetch('/open/v1/account/spot', {}, apiKey, apiSecret)
 
-  const balances = (data.data?.balances || [])
+  // Tokocrypto API response pakai "accountAssets", bukan "balances"
+  const balances = (data.data?.accountAssets || [])
     .filter(b => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0)
     .map(b => ({ asset: b.asset, free: parseFloat(b.free), locked: parseFloat(b.locked) }))
 
@@ -69,7 +70,7 @@ const fetchTrades = async (apiKey, apiSecret, symbol, options = {}) => {
 //  GET ACCOUNT BALANCE
 const getBalance = async (apiKey, apiSecret) => {
   const data = await tokoFetch('/open/v1/account/spot', {}, apiKey, apiSecret)
-  return (data.data?.balances || [])
+  return (data.data?.accountAssets || [])
     .filter(b => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0)
     .map(b => ({ asset: b.asset, free: parseFloat(b.free), locked: parseFloat(b.locked) }))
 }
@@ -77,11 +78,10 @@ const getBalance = async (apiKey, apiSecret) => {
 //  DETECT TRADED SYMBOLS
 const detectTradedSymbols = async (apiKey, apiSecret) => {
   const popularPairs = [
-  'BTC_USDT','ETH_USDT','BNB_USDT','SOL_USDT','XRP_USDT',
-  'ADA_USDT','DOGE_USDT','MATIC_USDT','LTC_USDT','LINK_USDT',
-  'BTC_IDR', 'ETH_IDR',  'BNB_IDR',  'SOL_IDR',
-  'TKO_IDR', 'TKO_USDT',
-]
+    'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
+    'ADAUSDT','DOGEUSDT','MATICUSDT','LTCUSDT','LINKUSDT',
+    'BTCIDR', 'ETHIDR',  'BNBIDR',  'SOLIDR',
+  ]
 
   const traded = []
   for (const sym of popularPairs) {
