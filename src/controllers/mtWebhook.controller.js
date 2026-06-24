@@ -130,9 +130,11 @@ const receiveTradeFromEA = async (req, res) => {
 
     return success(res, { message: 'Trade berhasil dicatat otomatis dari EA.', symbol: trade.symbol, instrumentType })
   } catch (err) {
-    console.error('[MT-WEBHOOK] receiveTradeFromEA:', err.message)
-    return error(res, 'Gagal memproses data dari EA.', 500)
-  }
+  console.error('[MT-WEBHOOK] receiveTradeFromEA FULL ERROR:', err)
+  console.error('[MT-WEBHOOK] error.code:', err.code)
+  console.error('[MT-WEBHOOK] error.meta:', err.meta)
+  return error(res, 'Gagal memproses data dari EA.', 500)
+}
 }
 
 /**
