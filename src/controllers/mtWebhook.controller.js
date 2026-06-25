@@ -85,14 +85,19 @@ const receiveTradeFromEA = async (req, res) => {
     })
 
     // Simpan ke Database
+    // Simpan ke Database (GANTI BAGIAN INI DI VS CODE LU)
     await prisma.journalTrade.create({
       data: {
         journalId:         journal.id,
         exchangeAccountId: account.id,
         externalTradeId:   externalTradeId,
         instrumentType,
+        
+        // --- Tambahkan field 'pair'
         symbol:            trade.symbol.toUpperCase(),
+        pair:              trade.symbol.toUpperCase(), 
         symbolName:        instrument?.name || trade.symbol,
+        
         baseCurrency:      instrument?.baseCurrency || '',
         quoteCurrency:     instrument?.quoteCurrency || 'USD',
         exchange:          account.accountName,
@@ -100,14 +105,22 @@ const receiveTradeFromEA = async (req, res) => {
         tradeType:         (trade.type || 'buy').toLowerCase(),
         entryPrice:        trade.openPrice,
         exitPrice:         trade.closePrice || null,
+        
+        //--- Volume
         quantity:          trade.volume,
+        volume:            trade.volume, 
         lotSize:           trade.volume,
+        
         stopLoss:          trade.sl || null,
         takeProfit:        trade.tp || null,
         commission:        trade.commission || null,
         swap:              trade.swap || null,
+        
+        // --- PNL / PROFIT ---
         pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
+        pnl:               trade.profit ?? pnl?.pnlAmount ?? null, 
         pnlPercent:        pnl?.pnlPercent ?? null,
+        
         tradeDate:         parseEADate(trade.openTime),
         closeDate:         parseEADate(trade.closeTime),
         notes:             trade.comment || null,
