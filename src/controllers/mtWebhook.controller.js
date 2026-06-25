@@ -26,6 +26,20 @@ const prisma = require('../utils/prisma')
  *   "comment": "EA-AutoExport"
  * }
  */
+
+// ==========================================
+// TAMBAHKAN INI DI ATAS FUNGSI CONTROLLER
+// ==========================================
+const parseEADate = (dateStr) => {
+  if (!dateStr) return null;
+  let normalized = dateStr.replace(/\./g, '-');
+  if (normalized.includes(' ')) {
+    normalized = normalized.replace(' ', 'T');
+  }
+  const date = new Date(normalized);
+  return isNaN(date.getTime()) ? new Date() : date;
+};
+
 const receiveTradeFromEA = async (req, res) => {
   try {
     const { webhookToken } = req.params
@@ -49,9 +63,11 @@ const receiveTradeFromEA = async (req, res) => {
     }
 
     // Cek duplikat berdasarkan ticket
-    const dup = await prisma.journalTrade.findFirst({
-      where: { externalTradeId: `MT-${trade.ticket}`, exchangeAccountId: account.id },
-    })
+const externalTradeId = `${account.platform.toUpperCase()}-${trade.ticket}`;
+
+const dup = await prisma.journalTrade.findFirst({
+  where: { externalTradeId, exchangeAccountId: account.id },
+});
     if (dup) {
       return success(res, { message: 'Trade sudah pernah tercatat (duplikat).', skipped: true })
     }
@@ -90,11 +106,12 @@ const receiveTradeFromEA = async (req, res) => {
       commission: trade.commission || 0,
     })
 
-    await prisma.journalTrade.create({
+    // GANTI BLOK DATA PRISMA CREATE MENJADI SEPERTI INI:
+await prisma.journalTrade.create({
   data: {
     journalId:         journal.id,
     exchangeAccountId: account.id,
-    externalTradeId:   `MT-${trade.ticket}`,
+    externalTradeId:   externalTradeId, // Gunakan variabel baru dari Langkah 2
     instrumentType,
     symbol:            trade.symbol.toUpperCase(),
     symbolName:        instrument?.name || trade.symbol,
@@ -113,8 +130,11 @@ const receiveTradeFromEA = async (req, res) => {
     swap:              trade.swap || null,
     pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
     pnlPercent:        pnl?.pnlPercent ?? null,
-    tradeDate:         trade.openTime ? new Date(trade.openTime.replace(/\./g, '-')) : new Date(),
-    closeDate:         trade.closeTime ? new Date(trade.closeTime.replace(/\./g, '-')) : null,
+    
+    // PERBAIKAN UTAMA: Menggunakan helper dari Langkah 1
+    tradeDate:         parseEADate(trade.openTime),
+    closeDate:         parseEADate(trade.closeTime),
+    
     notes:             trade.comment || null,
     status:            trade.closePrice ? 'closed' : 'open',
     tags:              ['ea-import'],
@@ -130,10 +150,10 @@ const receiveTradeFromEA = async (req, res) => {
 
     return success(res, { message: 'Trade berhasil dicatat otomatis dari EA.', symbol: trade.symbol, instrumentType })
   } catch (err) {
-  console.error('[MT-WEBHOOK] receiveTradeFromEA FULL ERROR:', err)
-  console.error('[MT-WEBHOOK] error.code:', err.code)
-  console.error('[MT-WEBHOOK] error.meta:', err.meta)
-  return error(res, 'Gagal memproses data dari EA.', 500)
+  console.error('[MT-WEBHOOK] receiveTradeFromEA FULL ERROR:', err);
+  console.error('[MT-WEBHOOK] error.code:', err.code);
+  console.error('[MT-WEBHOOK] error.meta:', err.meta);
+  return error(res, 'Gagal memproses data dari EA.', 500);
 }
 }
 
