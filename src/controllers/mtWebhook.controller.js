@@ -3,33 +3,7 @@ const { detectInstrumentType } = require('../services/mt/mt.parser')
 const { calculatePnL } = require('../services/instrument.service')
 const prisma = require('../utils/prisma')
 
-/**
- * POST /api/v1/mt/webhook/:webhookToken
- * Dipanggil otomatis oleh Expert Advisor (EA) setiap kali ada trade baru
- * di MT4/MT5 milik user. Tidak butuh JWT — pakai webhookToken unik per akun.
- *
- * Body JSON dari EA:
- * {
- *   "ticket": "123456789",
- *   "symbol": "XAUUSD",
- *   "type": "buy",            // atau "sell"
- *   "volume": 0.1,
- *   "openPrice": 2350.50,
- *   "closePrice": 2365.20,     // null kalau posisi masih open
- *   "sl": 2340.00,
- *   "tp": 2380.00,
- *   "profit": 147.00,
- *   "commission": -2.00,
- *   "swap": -0.50,
- *   "openTime": "2026.06.23 14:30:00",
- *   "closeTime": "2026.06.23 16:45:00",
- *   "comment": "EA-AutoExport"
- * }
- */
-
-// ==========================================
-// TAMBAHKAN INI DI ATAS FUNGSI CONTROLLER
-// ==========================================
+// Helper parsing tanggal ISO
 const parseEADate = (dateStr) => {
   if (!dateStr) return null;
   let normalized = dateStr.replace(/\./g, '-');
@@ -40,6 +14,9 @@ const parseEADate = (dateStr) => {
   return isNaN(date.getTime()) ? new Date() : date;
 };
 
+/**
+ * POST /api/v1/mt/webhook/:webhookToken
+ */
 const receiveTradeFromEA = async (req, res) => {
   try {
     const { webhookToken } = req.params
@@ -49,7 +26,7 @@ const receiveTradeFromEA = async (req, res) => {
       return error(res, 'Webhook token tidak ditemukan di URL.', 400)
     }
 
-    // Cari exchange account berdasarkan webhookToken (disimpan di field apiKey)
+    // Cari exchange account berdasarkan webhookToken
     const account = await prisma.exchangeAccount.findFirst({
       where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
     })
@@ -62,22 +39,23 @@ const receiveTradeFromEA = async (req, res) => {
       return error(res, 'Data trade tidak lengkap. Wajib ada "symbol" dan "ticket".', 400)
     }
 
-    // Cek duplikat berdasarkan ticket
-const externalTradeId = `${account.platform.toUpperCase()}-${trade.ticket}`;
+    // Standarisasi ID Unik
+    const externalTradeId = `${account.platform.toUpperCase()}-${trade.ticket}`;
 
-const dup = await prisma.journalTrade.findFirst({
-  where: { externalTradeId, exchangeAccountId: account.id },
-});
+    // Cek duplikat
+    const dup = await prisma.journalTrade.findFirst({
+      where: { externalTradeId, exchangeAccountId: account.id },
+    })
     if (dup) {
       return success(res, { message: 'Trade sudah pernah tercatat (duplikat).', skipped: true })
     }
 
-    // Cari/buat journal harian untuk auto-import EA
+    // Cari/buat journal harian
     const today = new Date().toISOString().split('T')[0]
     let journal = await prisma.journal.findFirst({
       where: {
         userId: account.userId,
-        tags:   { has: 'ea-auto-import' },
+        title: { contains: 'Auto-Import EA' }, // Cari berdasarkan judul agar lebih aman di semua jenis DB
         createdAt: { gte: new Date(`${today}T00:00:00Z`) },
       },
     })
@@ -106,41 +84,38 @@ const dup = await prisma.journalTrade.findFirst({
       commission: trade.commission || 0,
     })
 
-    // GANTI BLOK DATA PRISMA CREATE MENJADI SEPERTI INI:
-await prisma.journalTrade.create({
-  data: {
-    journalId:         journal.id,
-    exchangeAccountId: account.id,
-    externalTradeId:   externalTradeId, // Gunakan variabel baru dari Langkah 2
-    instrumentType,
-    symbol:            trade.symbol.toUpperCase(),
-    symbolName:        instrument?.name || trade.symbol,
-    baseCurrency:      instrument?.baseCurrency || '',
-    quoteCurrency:     instrument?.quoteCurrency || 'USD',
-    exchange:          account.accountName,
-    platform:          account.platform,
-    tradeType:         (trade.type || 'buy').toLowerCase(),
-    entryPrice:        trade.openPrice,
-    exitPrice:         trade.closePrice || null,
-    quantity:          trade.volume,
-    lotSize:           trade.volume,
-    stopLoss:          trade.sl || null,
-    takeProfit:        trade.tp || null,
-    commission:        trade.commission || null,
-    swap:              trade.swap || null,
-    pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
-    pnlPercent:        pnl?.pnlPercent ?? null,
-    
-    // PERBAIKAN UTAMA: Menggunakan helper dari Langkah 1
-    tradeDate:         parseEADate(trade.openTime),
-    closeDate:         parseEADate(trade.closeTime),
-    
-    notes:             trade.comment || null,
-    status:            trade.closePrice ? 'closed' : 'open',
-    tags:              ['ea-import'],
-    rawData:           trade,
-  },
-})
+    // Simpan ke Database
+    await prisma.journalTrade.create({
+      data: {
+        journalId:         journal.id,
+        exchangeAccountId: account.id,
+        externalTradeId:   externalTradeId,
+        instrumentType,
+        symbol:            trade.symbol.toUpperCase(),
+        symbolName:        instrument?.name || trade.symbol,
+        baseCurrency:      instrument?.baseCurrency || '',
+        quoteCurrency:     instrument?.quoteCurrency || 'USD',
+        exchange:          account.accountName,
+        platform:          account.platform,
+        tradeType:         (trade.type || 'buy').toLowerCase(),
+        entryPrice:        trade.openPrice,
+        exitPrice:         trade.closePrice || null,
+        quantity:          trade.volume,
+        lotSize:           trade.volume,
+        stopLoss:          trade.sl || null,
+        takeProfit:        trade.tp || null,
+        commission:        trade.commission || null,
+        swap:              trade.swap || null,
+        pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
+        pnlPercent:        pnl?.pnlPercent ?? null,
+        tradeDate:         parseEADate(trade.openTime),
+        closeDate:         parseEADate(trade.closeTime),
+        notes:             trade.comment || null,
+        status:            trade.closePrice ? 'closed' : 'open',
+        tags:              ['ea-import'],
+        rawData:           trade,
+      },
+    })
 
     // Update lastSyncAt akun
     await prisma.exchangeAccount.update({
@@ -150,16 +125,15 @@ await prisma.journalTrade.create({
 
     return success(res, { message: 'Trade berhasil dicatat otomatis dari EA.', symbol: trade.symbol, instrumentType })
   } catch (err) {
-  console.error('[MT-WEBHOOK] receiveTradeFromEA FULL ERROR:', err);
-  console.error('[MT-WEBHOOK] error.code:', err.code);
-  console.error('[MT-WEBHOOK] error.meta:', err.meta);
-  return error(res, 'Gagal memproses data dari EA.', 500);
-}
+    console.error('[MT-WEBHOOK] receiveTradeFromEA FULL ERROR:', err)
+    
+    // DENGAN MODIFIKASI INI, ERROR ASLINYA AKAN MUNCUL DI THUNDER CLIENT LU
+    return error(res, `Gagal: ${err.message}`, 500)
+  }
 }
 
 /**
  * GET /api/v1/mt/webhook-token/:accountId
- * Generate/ambil webhook token untuk akun MT4/5 tertentu (dipanggil dari frontend, butuh JWT biasa)
  */
 const getWebhookToken = async (req, res) => {
   try {
@@ -172,7 +146,6 @@ const getWebhookToken = async (req, res) => {
 
     if (!account) return error(res, 'Akun MT4/5 tidak ditemukan.', 404)
 
-    // Generate token kalau belum ada
     let token = account.apiKey
     if (!token) {
       const crypto = require('crypto')
