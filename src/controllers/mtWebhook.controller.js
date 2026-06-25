@@ -85,7 +85,6 @@ const receiveTradeFromEA = async (req, res) => {
     })
 
     // Simpan ke Database
-    // Simpan ke Database (GANTI BAGIAN INI DI VS CODE LU)
     await prisma.journalTrade.create({
       data: {
         journalId:         journal.id,
@@ -93,9 +92,8 @@ const receiveTradeFromEA = async (req, res) => {
         externalTradeId:   externalTradeId,
         instrumentType,
         
-        // --- Tambahkan field 'pair'
+        // Tetap gunakan field bawaan schema.prisma lu bro
         symbol:            trade.symbol.toUpperCase(),
-        pair:              trade.symbol.toUpperCase(), 
         symbolName:        instrument?.name || trade.symbol,
         
         baseCurrency:      instrument?.baseCurrency || '',
@@ -106,9 +104,8 @@ const receiveTradeFromEA = async (req, res) => {
         entryPrice:        trade.openPrice,
         exitPrice:         trade.closePrice || null,
         
-        //--- Volume
+        // Simpan lot ke field quantity sesuai schema.prisma
         quantity:          trade.volume,
-        volume:            trade.volume, 
         lotSize:           trade.volume,
         
         stopLoss:          trade.sl || null,
@@ -116,9 +113,8 @@ const receiveTradeFromEA = async (req, res) => {
         commission:        trade.commission || null,
         swap:              trade.swap || null,
         
-        // --- PNL / PROFIT ---
+        // Simpan profit/loss ke field pnlAmount sesuai schema.prisma
         pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
-        pnl:               trade.profit ?? pnl?.pnlAmount ?? null, 
         pnlPercent:        pnl?.pnlPercent ?? null,
         
         tradeDate:         parseEADate(trade.openTime),
@@ -126,7 +122,7 @@ const receiveTradeFromEA = async (req, res) => {
         notes:             trade.comment || null,
         status:            trade.closePrice ? 'closed' : 'open',
         tags:              ['ea-import'],
-        rawData:           trade,
+        rawData:           trade, 
       },
     })
 
