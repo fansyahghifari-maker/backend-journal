@@ -5,16 +5,9 @@ const { sendVerificationEmail, sendResetPasswordEmail } = require('../utils/mail
 // REGISTER - Pendaftaran User Baru
 const register = async (req, res) => {
   try {
-    const { user, verifyToken } = await authService.register(req.body)
-
-    // Kirim email verifikasi via Nodemailer (Gmail SMTP)
-    await sendVerificationEmail({
-      to:       user.email,
-      username: user.username,
-      token:    verifyToken,
-    })
-
-    return success(res, { user }, 'Registrasi berhasil! Cek email kamu untuk verifikasi akun.', 201)
+    const { user } = await authService.register(req.body)
+    // BETA MODE: langsung bisa login tanpa verifikasi email
+    return success(res, { user }, 'Registrasi berhasil! Silakan login.', 201)
   } catch (err) {
     return error(res, err.message, err.status || 500)
   }

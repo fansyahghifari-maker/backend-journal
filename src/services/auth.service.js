@@ -14,18 +14,16 @@ const register = async ({ email, username, password }) => {
   if (emailExists)    throw { status: 409, message: 'Email sudah terdaftar.' }
   if (usernameExists) throw { status: 409, message: 'Username sudah dipakai.' }
 
-  const passwordHash        = await bcrypt.hash(password, SALT_ROUNDS)
-  const verifyToken         = crypto.randomBytes(32).toString('hex')
-  const verifyTokenExpire   = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 jam
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS)
 
+  // BETA MODE: langsung verified, skip email verifikasi
   const user = await prisma.$transaction(async (tx) => {
     const newUser = await tx.user.create({
       data: {
         email,
         username,
         passwordHash,
-        verifyToken,
-        verifyTokenExpire,   // ← TAMBAH INI
+        isVerified: true,  // langsung aktif tanpa verifikasi email
       },
       select: { id:true, email:true, username:true, role:true, createdAt:true },
     })
@@ -39,15 +37,15 @@ const register = async ({ email, username, password }) => {
         userId:  newUser.id,
         type:    'welcome',
         title:   'Selamat datang di Corex Journal! 🎉',
-        message: 'Akun kamu sudah berhasil dibuat. Cek email untuk verifikasi akun.',
-        data:    { action: 'verify_email' },
+        message: 'Akun kamu sudah berhasil dibuat. Selamat trading!',
+        data:    { action: 'welcome' },
       },
     })
 
     return newUser
   })
 
-  return { user, verifyToken }
+  return { user }
 }
 
 
