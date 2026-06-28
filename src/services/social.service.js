@@ -441,10 +441,134 @@ const getUserProfile = async (username, viewerId) => {
   }
 }
 
+// LEADERBOARD — Top Trader by Performance
+const getLeaderboard = async (query = {}) => {
+  const { period = 'weekly', category = 'winrate', limit = 10 } = query
+
+  // Tentukan range waktu
+  const now = new Date()
+  let startDate
+  if (period === 'weekly') {
+    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+  } else if (period === 'monthly') {
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1)
+  } else if (period === 'alltime') {
+    startDate = new Date('2020-01-01')
+  } else {
+    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+  }
+
+  // Ambil semua user yang punya trade closed di periode ini (dari journal public)
+  const journals = await prisma.journal.findMany({
+    where: {
+      visibility: { in: ['public', 'members_only'] },
+    },
+    select: {
+      userId: true,
+      user: {
+        select: {
+          id:        true,
+          username:  true,
+          avatarUrl: true,
+        },
+      },
+      trades: {
+        where: {
+          status:    'closed',
+          closeDate: { gte: startDate },
+        },
+        select: {
+          pnlAmount:  true,
+          pnlPercent: true,
+          status:     true,
+        },
+      },
+    },
+  })
+
+  // Agregasi per user
+  const userMap = {}
+  for (const journal of journals) {
+    const uid = journal.userId
+    if (!userMap[uid]) {
+      userMap[uid] = {
+        userId:     journal.user.id,
+        username:   journal.user.username,
+        avatarUrl:  journal.user.avatarUrl,
+        totalTrade: 0,
+        winTrade:   0,
+        lossTrade:  0,
+        totalPnl:   0,
+        bestTrade:  null,
+      }
+    }
+
+    for (const trade of journal.trades) {
+      const pnl = parseFloat(trade.pnlAmount || 0)
+      const pct = parseFloat(trade.pnlPercent || 0)
+
+      userMap[uid].totalTrade++
+      userMap[uid].totalPnl += pnl
+
+      if (pnl > 0) {
+        userMap[uid].winTrade++
+        // Track best single trade
+        if (!userMap[uid].bestTrade || pct > userMap[uid].bestTrade) {
+          userMap[uid].bestTrade = pct
+        }
+      } else {
+        userMap[uid].lossTrade++
+      }
+    }
+  }
+
+  // Filter user yang punya minimal 3 trade (biar fair)
+  let leaderboard = Object.values(userMap).filter(u => u.totalTrade >= 3)
+
+  // Hitung winRate
+  leaderboard = leaderboard.map(u => ({
+    ...u,
+    winRate:   u.totalTrade > 0 ? Math.round((u.winTrade / u.totalTrade) * 100) : 0,
+    totalPnl:  parseFloat(u.totalPnl.toFixed(2)),
+    bestTrade: u.bestTrade ? parseFloat(u.bestTrade.toFixed(2)) : 0,
+  }))
+
+  // Sort berdasarkan category
+  if (category === 'winrate') {
+    leaderboard.sort((a, b) => b.winRate - a.winRate || b.totalTrade - a.totalTrade)
+  } else if (category === 'pnl') {
+    leaderboard.sort((a, b) => b.totalPnl - a.totalPnl)
+  } else if (category === 'trades') {
+    leaderboard.sort((a, b) => b.totalTrade - a.totalTrade)
+  }
+
+  // Tambah rank
+  leaderboard = leaderboard.slice(0, Number(limit)).map((u, i) => ({
+    rank: i + 1,
+    ...u,
+  }))
+
+  return {
+    leaderboard,
+    period,
+    category,
+    startDate: startDate.toISOString(),
+    endDate:   now.toISOString(),
+    meta: {
+      description: period === 'weekly'
+        ? 'Top trader minggu ini'
+        : period === 'monthly'
+        ? 'Top trader bulan ini'
+        : 'Top trader sepanjang masa',
+      minTrades: 3,
+    },
+  }
+}
+
 module.exports = {
   toggleLike, getLikes,
   addComment, getComments, updateComment, deleteComment,
-  getFeed, getTrending,
+  getFeed, getTrending, getLeaderboard,
   getNotifications, markNotificationRead, markAllRead, deleteNotification,
   getUserProfile,
 }

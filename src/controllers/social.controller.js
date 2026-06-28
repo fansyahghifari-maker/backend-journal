@@ -110,10 +110,18 @@ const getUserProfile = async (req, res) => {
   } catch (err) { return error(res, err.message, err.status || 500) }
 }
 
+// LEADERBOARD
+const getLeaderboard = async (req, res) => {
+  try {
+    const result = await socialService.getLeaderboard(req.query)
+    return success(res, result, 'Leaderboard berhasil diambil.')
+  } catch (err) { return error(res, err.message, err.status || 500) }
+}
+
 module.exports = {
   toggleLike, getLikes,
   addComment, getComments, updateComment, deleteComment,
-  getFeed, getTrending,
+  getFeed, getTrending, getLeaderboard,
   getNotifications, markNotificationRead, markAllRead, deleteNotification,
   getUserProfile,
 }

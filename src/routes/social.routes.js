@@ -11,8 +11,9 @@ const optionalAuth = (req, res, next) => {
 }
 
 //  FEED
-router.get('/feed',     optionalAuth, ctrl.getFeed)
-router.get('/trending', optionalAuth, ctrl.getTrending)
+router.get('/feed',        optionalAuth, ctrl.getFeed)
+router.get('/trending',    optionalAuth, ctrl.getTrending)
+router.get('/leaderboard', optionalAuth, ctrl.getLeaderboard)
 
 //  USER PROFILE PUBLIK
 router.get('/users/:username', optionalAuth, ctrl.getUserProfile)
