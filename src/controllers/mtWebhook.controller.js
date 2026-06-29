@@ -26,13 +26,13 @@ const receiveTradeFromEA = async (req, res) => {
       return error(res, 'Webhook token tidak ditemukan di URL.', 400)
     }
 
-    const account = await prisma.exchangeAccount.findFirst({
-      where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
-    })
+    let account = await prisma.exchangeAccount.findFirst({
+  where: { id: accountId, userId, platform: { in: ['mt4', 'mt5'] } },
+})
 
-    if (!account) {
-      return error(res, 'Webhook token tidak valid atau akun tidak ditemukan.', 404)
-    }
+if (!account) {
+  return error(res, 'Akun MT tidak ditemukan.', 404)
+}
 
     // ✅ Normalize field — support berbagai format EA
     const symbol   = trade.symbol
