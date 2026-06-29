@@ -26,20 +26,19 @@ const receiveTradeFromEA = async (req, res) => {
       return error(res, 'Webhook token tidak ditemukan di URL.', 400)
     }
 
-    // Cari exchange account berdasarkan webhookToken
-    let account = await prisma.exchangeAccount.findFirst({
-  where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
-})
+    // BALIKIN SEMULA: Cari akun wajib berdasarkan token unik dari URL
+    const account = await prisma.exchangeAccount.findFirst({
+      where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
+    })
 
     if (!account) {
-  return error(res, 'Gagal: Belum ada satu pun akun trading terdaftar di database.', 404)
-}
+      return error(res, 'Webhook token tidak valid atau akun tidak ditemukan.', 404)
+    }
 
     if (!trade.symbol || !trade.ticket) {
       return error(res, 'Data trade tidak lengkap. Wajib ada "symbol" dan "ticket".', 400)
     }
 
-    // FIX 1: Gunakan toLowerCase() agar konsisten dengan Enum platform di database lu (mt4/mt5)
     const platformLower = account.platform.toLowerCase();
     const externalTradeId = `${platformLower}-${trade.ticket}`;
 
@@ -68,19 +67,17 @@ const receiveTradeFromEA = async (req, res) => {
           title:      `Auto-Import EA — ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
           content:    `Trade masuk otomatis dari Expert Advisor di akun ${account.accountName} (${account.platform.toUpperCase()}).`,
           visibility: 'private',
-          tags:       [platformLower, 'ea-auto-import'], // Samakan huruf kecil
+          tags:       [platformLower, 'ea-auto-import'],
         },
       })
     }
 
-    // FIX 2: Paksa output instrumentType jadi huruf kecil agar cocok dengan ENUM prisma
     let detectedType = detectInstrumentType(trade.symbol) || 'forex';
-    detectedType = detectedType.toLowerCase(); // Amankan dari Huruf Kapital
+    detectedType = detectedType.toLowerCase();
 
-    // Fallback validasi jika typenya melenceng dari ENUM database
     const validTypes = ['crypto', 'forex', 'commodity', 'index', 'stock', 'crypto_futures'];
     if (!validTypes.includes(detectedType)) {
-      detectedType = 'forex'; // Set default jika tidak valid
+      detectedType = 'forex';
     }
 
     const instrument = await prisma.instrument.findFirst({ where: { symbol: trade.symbol } })
@@ -94,36 +91,30 @@ const receiveTradeFromEA = async (req, res) => {
       commission: trade.commission || 0,
     })
 
-    // Simpan ke Database
+    // Simpan ke Database (Kondisi BERSIH tanpa instrumentId)
     await prisma.journalTrade.create({
       data: {
         journalId:         journal.id,
         exchangeAccountId: account.id,
         externalTradeId:   externalTradeId,
-        instrumentType:    detectedType, // Pakai yang sudah aman
-        
+        instrumentType:    detectedType,
         symbol:            trade.symbol.toUpperCase(),
         symbolName:        instrument?.name || trade.symbol,
-        
         baseCurrency:      instrument?.baseCurrency || '',
         quoteCurrency:     instrument?.quoteCurrency || 'USD',
         exchange:          account.accountName,
-        platform:          platformLower, // Pakai enum huruf kecil (mt4 / mt5)
+        platform:          platformLower,
         tradeType:         (trade.type || 'buy').toLowerCase(),
         entryPrice:        trade.openPrice,
         exitPrice:         trade.closePrice || null,
-        
         quantity:          trade.volume,
         lotSize:           trade.volume,
-        
         stopLoss:          trade.sl || null,
         takeProfit:        trade.tp || null,
         commission:        trade.commission || null,
         swap:              trade.swap || null,
-        
         pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
         pnlPercent:        pnl?.pnlPercent ?? null,
-        
         tradeDate:         parseEADate(trade.openTime),
         closeDate:         parseEADate(trade.closeTime),
         notes:             trade.comment || null,
@@ -133,7 +124,6 @@ const receiveTradeFromEA = async (req, res) => {
       },
     })
 
-    // Update lastSyncAt akun
     await prisma.exchangeAccount.update({
       where: { id: account.id },
       data:  { lastSyncAt: new Date(), lastSyncStatus: 'EA: trade diterima', status: 'active' },
