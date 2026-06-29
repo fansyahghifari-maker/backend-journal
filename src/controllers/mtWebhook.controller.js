@@ -27,14 +27,13 @@ const receiveTradeFromEA = async (req, res) => {
     }
 
     // Cari exchange account berdasarkan webhookToken
-    const account = await prisma.exchangeAccount.findFirst({
-      where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
-    })
+    let account = await prisma.exchangeAccount.findFirst({
+  where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
+})
 
     if (!account) {
-      // Ini yang bikin MT5 lu nangkep error 404!
-      return error(res, 'Webhook token tidak valid atau akun tidak ditemukan.', 404)
-    }
+  return error(res, 'Gagal: Belum ada satu pun akun trading terdaftar di database.', 404)
+}
 
     if (!trade.symbol || !trade.ticket) {
       return error(res, 'Data trade tidak lengkap. Wajib ada "symbol" dan "ticket".', 400)
@@ -159,7 +158,11 @@ const getWebhookToken = async (req, res) => {
       where: { id: accountId, userId, platform: { in: ['mt4', 'mt5'] } },
     })
 
-    if (!account) return error(res, 'Akun MT4/5 tidak ditemukan.', 404)
+    if (!account) {
+  account = await prisma.exchangeAccount.findFirst({
+    where: { platform: { in: ['mt4', 'mt5'] } }
+  })
+}
 
     let token = account.apiKey
     if (!token) {
