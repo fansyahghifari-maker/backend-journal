@@ -19,24 +19,29 @@ const parseEADate = (dateStr) => {
  */
 const receiveTradeFromEA = async (req, res) => {
   try {
-    const { webhookToken } = req.params
+    const { webhookToken } = req.params  // ← dari URL
     const trade = req.body
 
     if (!webhookToken) {
       return error(res, 'Webhook token tidak ditemukan di URL.', 400)
     }
 
-    let account = await prisma.exchangeAccount.findFirst({
-  where: { id: accountId, userId, platform: { in: ['mt4', 'mt5'] } },
-})
+    // ✅ Cari akun HANYA via webhookToken (apiKey)
+    // JANGAN pakai accountId disini!
+    const account = await prisma.exchangeAccount.findFirst({
+      where: { 
+        apiKey: webhookToken, 
+        platform: { in: ['mt4', 'mt5'] } 
+      },
+    })
 
-if (!account) {
-  return error(res, 'Akun MT tidak ditemukan.', 404)
-}
+    if (!account) {
+      return error(res, 'Webhook token tidak valid atau akun tidak ditemukan.', 404)
+    }
 
-    // ✅ Normalize field — support berbagai format EA
-    const symbol   = trade.symbol
-    const ticket   = trade.ticket
+    // Normalize field dari berbagai format EA
+    const symbol     = trade.symbol
+    const ticket     = trade.ticket
     const openPrice  = trade.openPrice  ?? trade.entryPrice ?? trade.price ?? null
     const closePrice = trade.closePrice ?? trade.exitPrice  ?? null
     const volume     = trade.volume     ?? trade.lots       ?? trade.quantity ?? null
@@ -47,9 +52,10 @@ if (!account) {
       return error(res, 'Data trade tidak lengkap. Wajib ada "symbol" dan "ticket".', 400)
     }
 
-    const platformLower    = account.platform.toLowerCase()
-    const externalTradeId  = `${platformLower}-${ticket}`
+    const platformLower   = account.platform.toLowerCase()
+    const externalTradeId = `${platformLower}-${ticket}`
 
+    // Cek duplikat
     const dup = await prisma.journalTrade.findFirst({
       where: { externalTradeId, exchangeAccountId: account.id },
     })
@@ -57,6 +63,7 @@ if (!account) {
       return success(res, { message: 'Trade sudah pernah tercatat (duplikat).', skipped: true })
     }
 
+    // Cari/buat journal harian
     const today = new Date().toISOString().split('T')[0]
     let journal = await prisma.journal.findFirst({
       where: {
@@ -107,12 +114,12 @@ if (!account) {
         exchange:          account.accountName,
         platform:          platformLower,
         tradeType:         (trade.type || 'buy').toLowerCase(),
-        entryPrice:        openPrice,       // ✅ Fixed
-        exitPrice:         closePrice,      // ✅ Fixed
-        quantity:          volume,          // ✅ Fixed
-        lotSize:           volume,          // ✅ Fixed
-        stopLoss:          sl,              // ✅ Fixed
-        takeProfit:        tp,              // ✅ Fixed
+        entryPrice:        openPrice,
+        exitPrice:         closePrice,
+        quantity:          volume,
+        lotSize:           volume,
+        stopLoss:          sl,
+        takeProfit:        tp,
         commission:        trade.commission || null,
         swap:              trade.swap || null,
         pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
