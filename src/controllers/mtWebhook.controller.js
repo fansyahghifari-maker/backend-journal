@@ -26,7 +26,6 @@ const receiveTradeFromEA = async (req, res) => {
       return error(res, 'Webhook token tidak ditemukan di URL.', 400)
     }
 
-    // BALIKIN SEMULA: Cari akun wajib berdasarkan token unik dari URL
     const account = await prisma.exchangeAccount.findFirst({
       where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
     })
@@ -35,14 +34,22 @@ const receiveTradeFromEA = async (req, res) => {
       return error(res, 'Webhook token tidak valid atau akun tidak ditemukan.', 404)
     }
 
-    if (!trade.symbol || !trade.ticket) {
+    // ✅ Normalize field — support berbagai format EA
+    const symbol   = trade.symbol
+    const ticket   = trade.ticket
+    const openPrice  = trade.openPrice  ?? trade.entryPrice ?? trade.price ?? null
+    const closePrice = trade.closePrice ?? trade.exitPrice  ?? null
+    const volume     = trade.volume     ?? trade.lots       ?? trade.quantity ?? null
+    const sl         = trade.sl         ?? trade.stopLoss   ?? null
+    const tp         = trade.tp         ?? trade.takeProfit ?? null
+
+    if (!symbol || !ticket) {
       return error(res, 'Data trade tidak lengkap. Wajib ada "symbol" dan "ticket".', 400)
     }
 
-    const platformLower = account.platform.toLowerCase();
-    const externalTradeId = `${platformLower}-${trade.ticket}`;
+    const platformLower    = account.platform.toLowerCase()
+    const externalTradeId  = `${platformLower}-${ticket}`
 
-    // Cek duplikat
     const dup = await prisma.journalTrade.findFirst({
       where: { externalTradeId, exchangeAccountId: account.id },
     })
@@ -50,12 +57,11 @@ const receiveTradeFromEA = async (req, res) => {
       return success(res, { message: 'Trade sudah pernah tercatat (duplikat).', skipped: true })
     }
 
-    // Cari/buat journal harian
     const today = new Date().toISOString().split('T')[0]
     let journal = await prisma.journal.findFirst({
       where: {
-        userId: account.userId,
-        title: { contains: 'Auto-Import EA' }, 
+        userId:    account.userId,
+        title:     { contains: 'Auto-Import EA' },
         createdAt: { gte: new Date(`${today}T00:00:00Z`) },
       },
     })
@@ -72,45 +78,41 @@ const receiveTradeFromEA = async (req, res) => {
       })
     }
 
-    let detectedType = detectInstrumentType(trade.symbol) || 'forex';
-    detectedType = detectedType.toLowerCase();
+    let detectedType = detectInstrumentType(symbol) || 'forex'
+    detectedType = detectedType.toLowerCase()
+    const validTypes = ['crypto', 'forex', 'commodity', 'index', 'stock', 'crypto_futures']
+    if (!validTypes.includes(detectedType)) detectedType = 'forex'
 
-    const validTypes = ['crypto', 'forex', 'commodity', 'index', 'stock', 'crypto_futures'];
-    if (!validTypes.includes(detectedType)) {
-      detectedType = 'forex';
-    }
-
-    const instrument = await prisma.instrument.findFirst({ where: { symbol: trade.symbol } })
+    const instrument = await prisma.instrument.findFirst({ where: { symbol } })
 
     const pnl = calculatePnL({
       instrumentType: detectedType,
-      tradeType:  trade.type,
-      entryPrice: trade.openPrice,
-      exitPrice:  trade.closePrice,
-      quantity:   trade.volume,
-      commission: trade.commission || 0,
+      tradeType:      trade.type,
+      entryPrice:     openPrice,
+      exitPrice:      closePrice,
+      quantity:       volume,
+      commission:     trade.commission || 0,
     })
 
-    // Simpan ke Database (Kondisi BERSIH tanpa instrumentId)
     await prisma.journalTrade.create({
       data: {
         journalId:         journal.id,
         exchangeAccountId: account.id,
         externalTradeId:   externalTradeId,
         instrumentType:    detectedType,
-        symbol:            trade.symbol.toUpperCase(),
-        symbolName:        instrument?.name || trade.symbol,
+        symbol:            symbol.toUpperCase(),
+        symbolName:        instrument?.name || symbol,
         baseCurrency:      instrument?.baseCurrency || '',
         quoteCurrency:     instrument?.quoteCurrency || 'USD',
         exchange:          account.accountName,
         platform:          platformLower,
         tradeType:         (trade.type || 'buy').toLowerCase(),
-        entryPrice:        trade.openPrice,
-        exitPrice:         trade.closePrice || null,
-        quantity:          trade.volume,
-        lotSize:           trade.volume,
-        stopLoss:          trade.sl || null,
-        takeProfit:        trade.tp || null,
+        entryPrice:        openPrice,       // ✅ Fixed
+        exitPrice:         closePrice,      // ✅ Fixed
+        quantity:          volume,          // ✅ Fixed
+        lotSize:           volume,          // ✅ Fixed
+        stopLoss:          sl,              // ✅ Fixed
+        takeProfit:        tp,              // ✅ Fixed
         commission:        trade.commission || null,
         swap:              trade.swap || null,
         pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
@@ -118,9 +120,9 @@ const receiveTradeFromEA = async (req, res) => {
         tradeDate:         parseEADate(trade.openTime),
         closeDate:         parseEADate(trade.closeTime),
         notes:             trade.comment || null,
-        status:            trade.closePrice ? 'closed' : 'open',
+        status:            closePrice ? 'closed' : 'open',
         tags:              ['ea-import'],
-        rawData:           trade, 
+        rawData:           trade,
       },
     })
 
@@ -129,7 +131,12 @@ const receiveTradeFromEA = async (req, res) => {
       data:  { lastSyncAt: new Date(), lastSyncStatus: 'EA: trade diterima', status: 'active' },
     })
 
-    return success(res, { message: 'Trade berhasil dicatat otomatis dari EA.', symbol: trade.symbol, instrumentType: detectedType })
+    return success(res, { 
+      message: 'Trade berhasil dicatat otomatis dari EA.', 
+      symbol, 
+      instrumentType: detectedType 
+    })
+
   } catch (err) {
     console.error('[MT-WEBHOOK] receiveTradeFromEA FULL ERROR:', err)
     return error(res, `Gagal: ${err.message}`, 500)
