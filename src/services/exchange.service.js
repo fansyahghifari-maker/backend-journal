@@ -64,7 +64,7 @@ const connectAccount = async (userId, data) => {
   })
   if (existing) throw { status: 409, message: `Akun ${platform} ini sudah terhubung sebelumnya.` }
 
-  // ⚡ GANTI BLOK INI DI DALAM FUNCTION connectAccount ⚡
+  // ⚡ SEBELUM PUSH, UBAH BLOK INI DI DALAM CONNECTACCOUNT ⚡
   const account = await prisma.exchangeAccount.create({
     data: {
       userId,
@@ -72,9 +72,9 @@ const connectAccount = async (userId, data) => {
       accountName,
       accountId:     accountId     || null,
 
-      // --- EDIT BARIS INI (AUTO GENERATE TOKEN KALAU PLATFORM MT4/MT5) ---
+      // --- JALAN KELUAR: KHUSUS MT JANGAN DI-ENCRYPT, MASUKIN MENTAH ---
       apiKey: platform.startsWith('mt') 
-        ? encrypt(crypto.randomUUID()) 
+        ? crypto.randomUUID() // <-- Hapus fungsi encrypt()-nya, biarin UUID mentah masuk DB
         : (encrypt(apiKey) || null),
       // -------------------------------------------------------------------
 
@@ -82,7 +82,7 @@ const connectAccount = async (userId, data) => {
       apiPassphrase: encrypt(apiPassphrase)  || null,
       serverName:    serverName    || null,
       loginNumber:   loginNumber   || null,
-      status:        platform.startsWith('mt') ? 'active' : 'pending', // MT langsung active
+      status:        platform.startsWith('mt') ? 'active' : 'pending',
       isReadOnly:    true,
     },
     select: {
