@@ -61,12 +61,13 @@ const calculatePnL = (data) => {
   let pnlAmount = 0
   let pnlPips   = null
   let pipCount  = null
+  let cSize     = 1   // dipakai juga di luar blok if untuk konsistensi cost di bawah
 
   if (instrumentType === 'forex' || instrumentType === 'commodity' || instrumentType === 'index') {
-    // Forex/Commodity: PnL = (exit - entry) × lotSize × qty - commission - swap
-    // Untuk Short: (entry - exit) × lotSize × qty
-    const lot   = Number(lotSize || 100000)
-    const cSize = contractSize ? Number(contractSize) : lot
+    // Forex/Commodity: PnL = (exit - entry) × contractSize × qty - commission - swap
+    // Untuk Short: (entry - exit) × contractSize × qty
+    const lot = Number(lotSize || 100000)
+    cSize     = contractSize ? Number(contractSize) : lot
 
     if (tradeType === 'long' || tradeType === 'buy') {
       pnlAmount = (exit - entry) * cSize * qty
@@ -87,6 +88,7 @@ const calculatePnL = (data) => {
 
   } else {
     // Crypto / Spot / Futures: PnL = (exit - entry) × qty
+    cSize = 1   // tidak ada contract size, qty langsung dalam unit aset
     if (tradeType === 'long' || tradeType === 'buy') {
       pnlAmount = (exit - entry) * qty
     } else {
@@ -95,7 +97,10 @@ const calculatePnL = (data) => {
     pnlAmount = pnlAmount - comm
   }
 
-  const cost       = entry * qty
+  // FIX: cost harus dihitung dengan cSize yang SAMA dengan yang dipakai pnlAmount,
+  // kalau tidak, pnlPercent akan meledak karena membandingkan skala yang beda
+  // (sebelumnya cost = entry * qty saja, tanpa cSize, padahal pnlAmount sudah dikali cSize)
+  const cost       = entry * cSize * qty
   const pnlPercent = cost > 0 ? (pnlAmount / cost) * 100 : 0
 
   return {
