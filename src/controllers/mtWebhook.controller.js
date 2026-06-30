@@ -16,30 +16,30 @@ const parseEADate = (dateStr) => {
 
 /**
  * POST /api/v1/mt/webhook/:webhookToken
+ *
+ * PENTING: satu position MT5 bisa kirim 2 event terpisah —
+ * "open" (saat posisi dibuka) dan "closed" (saat posisi ditutup).
+ * Keduanya pakai externalTradeId yang sama, jadi event kedua
+ * harus UPDATE row yang sudah ada, bukan di-skip sebagai duplikat.
  */
 const receiveTradeFromEA = async (req, res) => {
   try {
-    const { webhookToken } = req.params  // ← dari URL
+    const { webhookToken } = req.params
     const trade = req.body
 
     if (!webhookToken) {
       return error(res, 'Webhook token tidak ditemukan di URL.', 400)
     }
 
-    // ✅ Cari akun HANYA via webhookToken (apiKey)
-    // JANGAN pakai accountId disini!
     const account = await prisma.exchangeAccount.findFirst({
-      where: { 
-        apiKey: webhookToken, 
-        platform: { in: ['mt4', 'mt5'] } 
-      },
+      where: { apiKey: webhookToken, platform: { in: ['mt4', 'mt5'] } },
     })
 
     if (!account) {
       return error(res, 'Webhook token tidak valid atau akun tidak ditemukan.', 404)
     }
 
-    // Normalize field dari berbagai format EA
+    // Normalize field — support berbagai format EA (openPrice/entryPrice/price, dst)
     const symbol     = trade.symbol
     const ticket     = trade.ticket
     const openPrice  = trade.openPrice  ?? trade.entryPrice ?? trade.price ?? null
@@ -55,15 +55,62 @@ const receiveTradeFromEA = async (req, res) => {
     const platformLower   = account.platform.toLowerCase()
     const externalTradeId = `${platformLower}-${ticket}`
 
-    // Cek duplikat
-    const dup = await prisma.journalTrade.findFirst({
+    // Cari instrument & hitung PnL (dipakai baik untuk create maupun update)
+    let detectedType = detectInstrumentType(symbol) || 'forex'
+    detectedType = detectedType.toLowerCase()
+    const validTypes = ['crypto', 'forex', 'commodity', 'index', 'stock', 'crypto_futures']
+    if (!validTypes.includes(detectedType)) detectedType = 'forex'
+
+    const instrument = await prisma.instrument.findFirst({ where: { symbol } })
+
+    const pnl = calculatePnL({
+      instrumentType: detectedType,
+      tradeType:      trade.type,
+      entryPrice:     openPrice,
+      exitPrice:      closePrice,
+      quantity:       volume,
+      commission:     trade.commission || 0,
+    })
+
+    // Cek apakah trade dengan ticket ini sudah pernah masuk
+    const existing = await prisma.journalTrade.findFirst({
       where: { externalTradeId, exchangeAccountId: account.id },
     })
-    if (dup) {
-      return success(res, { message: 'Trade sudah pernah tercatat (duplikat).', skipped: true })
+
+    if (existing) {
+      // UPDATE — biasanya kejadian saat event "closed" masuk
+      // setelah event "open" sebelumnya sudah tercatat
+      await prisma.journalTrade.update({
+        where: { id: existing.id },
+        data: {
+          exitPrice:  closePrice ?? existing.exitPrice,
+          pnlAmount:  trade.profit ?? pnl?.pnlAmount ?? existing.pnlAmount,
+          pnlPercent: pnl?.pnlPercent ?? existing.pnlPercent,
+          closeDate:  closePrice ? parseEADate(trade.closeTime) : existing.closeDate,
+          status:     closePrice ? 'closed' : existing.status,
+          commission: trade.commission ?? existing.commission,
+          swap:       trade.swap ?? existing.swap,
+          stopLoss:   sl ?? existing.stopLoss,
+          takeProfit: tp ?? existing.takeProfit,
+          notes:      trade.comment || existing.notes,
+          rawData:    trade,
+        },
+      })
+
+      await prisma.exchangeAccount.update({
+        where: { id: account.id },
+        data:  { lastSyncAt: new Date(), lastSyncStatus: 'EA: trade diupdate', status: 'active' },
+      })
+
+      return success(res, {
+        message: 'Trade berhasil diupdate.',
+        symbol,
+        instrumentType: detectedType,
+        updated: true,
+      })
     }
 
-    // Cari/buat journal harian
+    // CREATE — trade baru, belum pernah tercatat sama sekali
     const today = new Date().toISOString().split('T')[0]
     let journal = await prisma.journal.findFirst({
       where: {
@@ -84,22 +131,6 @@ const receiveTradeFromEA = async (req, res) => {
         },
       })
     }
-
-    let detectedType = detectInstrumentType(symbol) || 'forex'
-    detectedType = detectedType.toLowerCase()
-    const validTypes = ['crypto', 'forex', 'commodity', 'index', 'stock', 'crypto_futures']
-    if (!validTypes.includes(detectedType)) detectedType = 'forex'
-
-    const instrument = await prisma.instrument.findFirst({ where: { symbol } })
-
-    const pnl = calculatePnL({
-      instrumentType: detectedType,
-      tradeType:      trade.type,
-      entryPrice:     openPrice,
-      exitPrice:      closePrice,
-      quantity:       volume,
-      commission:     trade.commission || 0,
-    })
 
     await prisma.journalTrade.create({
       data: {
@@ -138,10 +169,10 @@ const receiveTradeFromEA = async (req, res) => {
       data:  { lastSyncAt: new Date(), lastSyncStatus: 'EA: trade diterima', status: 'active' },
     })
 
-    return success(res, { 
-      message: 'Trade berhasil dicatat otomatis dari EA.', 
-      symbol, 
-      instrumentType: detectedType 
+    return success(res, {
+      message: 'Trade berhasil dicatat otomatis dari EA.',
+      symbol,
+      instrumentType: detectedType,
     })
 
   } catch (err) {
@@ -158,15 +189,13 @@ const getWebhookToken = async (req, res) => {
     const userId    = req.user.id
     const accountId = req.params.accountId
 
-    const account = await prisma.exchangeAccount.findFirst({
+    let account = await prisma.exchangeAccount.findFirst({
       where: { id: accountId, userId, platform: { in: ['mt4', 'mt5'] } },
     })
 
     if (!account) {
-  account = await prisma.exchangeAccount.findFirst({
-    where: { platform: { in: ['mt4', 'mt5'] } }
-  })
-}
+      return error(res, 'Akun MT tidak ditemukan.', 404)
+    }
 
     let token = account.apiKey
     if (!token) {
