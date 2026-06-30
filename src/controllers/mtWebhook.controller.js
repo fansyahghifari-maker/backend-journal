@@ -14,6 +14,21 @@ const parseEADate = (dateStr) => {
   return isNaN(date.getTime()) ? new Date() : date;
 };
 
+// FIX: pnlAmount (dari trade.profit MT5, sumber kebenaran) dan pnlPercent
+// (dari calculatePnL() internal) dihitung lewat 2 jalur yang independen.
+// Kalau tradeType yang dikirim ke calculatePnL salah arah (buy/sell tertukar),
+// tanda pnlPercent bisa kebalik dari pnlAmount walau besarannya sudah benar.
+// Helper ini memaksa tanda pnlPercent SELALU mengikuti tanda pnlAmount final,
+// supaya keduanya konsisten dan tidak pernah berlawanan secara visual di UI.
+const alignPnlPercentSign = (pnlAmount, pnlPercent) => {
+  if (pnlPercent === null || pnlPercent === undefined) return pnlPercent
+  if (pnlAmount === null || pnlAmount === undefined) return pnlPercent
+  const magnitude = Math.abs(pnlPercent)
+  if (pnlAmount > 0) return magnitude
+  if (pnlAmount < 0) return -magnitude
+  return 0
+};
+
 /**
  * POST /api/v1/mt/webhook/:webhookToken
  *
@@ -80,12 +95,13 @@ const receiveTradeFromEA = async (req, res) => {
     if (existing) {
       // UPDATE — biasanya kejadian saat event "closed" masuk
       // setelah event "open" sebelumnya sudah tercatat
+      const finalPnlAmountUpdate = trade.profit ?? pnl?.pnlAmount ?? existing.pnlAmount
       await prisma.journalTrade.update({
         where: { id: existing.id },
         data: {
           exitPrice:  closePrice ?? existing.exitPrice,
-          pnlAmount:  trade.profit ?? pnl?.pnlAmount ?? existing.pnlAmount,
-          pnlPercent: pnl?.pnlPercent ?? existing.pnlPercent,
+          pnlAmount:  finalPnlAmountUpdate,
+          pnlPercent: alignPnlPercentSign(finalPnlAmountUpdate, pnl?.pnlPercent ?? existing.pnlPercent),
           closeDate:  closePrice ? parseEADate(trade.closeTime) : existing.closeDate,
           status:     closePrice ? 'closed' : existing.status,
           commission: trade.commission ?? existing.commission,
@@ -132,6 +148,8 @@ const receiveTradeFromEA = async (req, res) => {
       })
     }
 
+    const finalPnlAmountCreate = trade.profit ?? pnl?.pnlAmount ?? null
+
     await prisma.journalTrade.create({
       data: {
         journalId:         journal.id,
@@ -153,8 +171,8 @@ const receiveTradeFromEA = async (req, res) => {
         takeProfit:        tp,
         commission:        trade.commission || null,
         swap:              trade.swap || null,
-        pnlAmount:         trade.profit ?? pnl?.pnlAmount ?? null,
-        pnlPercent:        pnl?.pnlPercent ?? null,
+        pnlAmount:         finalPnlAmountCreate,
+        pnlPercent:        alignPnlPercentSign(finalPnlAmountCreate, pnl?.pnlPercent ?? null),
         tradeDate:         parseEADate(trade.openTime),
         closeDate:         parseEADate(trade.closeTime),
         notes:             trade.comment || null,
