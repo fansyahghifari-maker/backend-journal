@@ -57,6 +57,7 @@ const connectAccount = async (userId, data) => {
   await assertAccess(userId)
 
   const { platform, accountName, accountId, apiKey, apiSecret, apiPassphrase, serverName, loginNumber } = data
+  const isMt = platform === 'mt4' || platform === 'mt5'
 
   // Cek duplikat
   const existing = await prisma.exchangeAccount.findFirst({
@@ -64,26 +65,39 @@ const connectAccount = async (userId, data) => {
   })
   if (existing) throw { status: 409, message: `Akun ${platform} ini sudah terhubung sebelumnya.` }
 
-  // ⚡ SEBELUM PUSH, UBAH BLOK INI DI DALAM CONNECTACCOUNT ⚡
+  // ── KHUSUS MT4/MT5: provision akun di MetaApi cloud (gantiin EA .mq5) ──
+  // Bukan simpan file EA ke MT5 user, tapi bikin "terminal" MT4/5 yang jalan
+  // di server MetaApi pakai login/password/server broker yang user kasih.
+  // Makanya user tinggal isi form biasa dari HP, gak perlu install apa-apa.
+  let metaApiAccountId = null
+  if (isMt) {
+    if (!loginNumber || !apiSecret || !serverName) {
+      throw { status: 400, message: 'Login, password (investor password disarankan), dan nama server broker wajib diisi untuk MT4/MT5.' }
+    }
+    const metaapi = require('./exchanges/metaapi.service')
+    const provisioned = await metaapi.provisionAccount({
+      loginNumber, password: apiSecret, serverName, platform, accountName,
+    })
+    metaApiAccountId = provisioned.metaApiAccountId
+  }
+
   const account = await prisma.exchangeAccount.create({
     data: {
       userId,
       platform,
       accountName,
       accountId:     accountId     || null,
-
-      // --- JALAN KELUAR: KHUSUS MT JANGAN DI-ENCRYPT, MASUKIN MENTAH ---
-      apiKey: platform.startsWith('mt') 
-        ? crypto.randomUUID() // <-- Hapus fungsi encrypt()-nya, biarin UUID mentah masuk DB
-        : (encrypt(apiKey) || null),
-      // -------------------------------------------------------------------
-
-      apiSecret:     encrypt(apiSecret)      || null,
+      apiKey:        isMt ? null : (encrypt(apiKey) || null),
+      apiSecret:     encrypt(apiSecret)      || null, // password MT juga tetap dienkripsi
       apiPassphrase: encrypt(apiPassphrase)  || null,
       serverName:    serverName    || null,
       loginNumber:   loginNumber   || null,
-      status:        platform.startsWith('mt') ? 'active' : 'pending',
+      status:        isMt ? 'active' : 'pending',
       isReadOnly:    true,
+      // MT4/MT5: langsung nyalain auto-sync (cron bakal jalanin sync ulang tiap 30 menit tanpa disuruh lagi)
+      autoSync:      isMt ? true : false,
+      syncInterval:  isMt ? 30   : 60,
+      metadata:      isMt ? { metaApiAccountId } : undefined,
     },
     select: {
       id: true, platform: true, accountName: true,
@@ -92,7 +106,21 @@ const connectAccount = async (userId, data) => {
     },
   })
 
-  return account
+  // ── LANGSUNG IMPORT HISTORY PERTAMA KALI SAAT INI JUGA ──
+  // Biar user gak perlu manual pencet "import" abis connect — begitu akun kesambung,
+  // history trade langsung ketarik saat itu juga. Sync berikutnya diambil alih cron (tiap 30 menit).
+  let initialImport = null
+  if (isMt) {
+    try {
+      initialImport = await importTrades(account.id, userId, {})
+    } catch (err) {
+      // Connect-nya tetap sukses walau import pertama gagal (misal history masih kosong) — gak nge-block response
+      console.error(`[CONNECT] Initial import gagal untuk akun ${account.id}: ${err.message}`)
+      initialImport = { error: err.message }
+    }
+  }
+
+  return { ...account, initialImport }
 }
 
 //  GET MY CONNECTED ACCOUNTS
@@ -130,6 +158,12 @@ const updateAccount = async (accountId, userId, data) => {
 //  DISCONNECT ACCOUNT
 const disconnectAccount = async (accountId, userId) => {
   const { account } = await getCredentials(accountId, userId)
+
+  if ((account.platform === 'mt4' || account.platform === 'mt5') && account.metadata?.metaApiAccountId) {
+    const metaapi = require('./exchanges/metaapi.service')
+    await metaapi.removeAccount({ metaApiAccountId: account.metadata.metaApiAccountId })
+  }
+
   await prisma.exchangeAccount.delete({ where: { id: accountId } })
   return { disconnected: true, platform: account.platform }
 }
@@ -137,12 +171,15 @@ const disconnectAccount = async (accountId, userId) => {
 //  TEST CONNECTION
 const testConnection = async (accountId, userId) => {
   const { account, apiKey, apiSecret } = await getCredentials(accountId, userId)
+  const isMt = account.platform === 'mt4' || account.platform === 'mt5'
 
   let result = { success: false, message: '' }
 
   try {
     const service = exchanges.getService(account.platform)
-    result = await service.testConnection(apiKey, apiSecret)
+    result = isMt
+      ? await service.testConnection({ metaApiAccountId: account.metadata?.metaApiAccountId })
+      : await service.testConnection(apiKey, apiSecret)
   } catch (err) {
     result = { success: false, message: err.message || 'Koneksi gagal.' }
   }
@@ -164,21 +201,30 @@ const testConnection = async (accountId, userId) => {
 //  IMPORT TRADES OTOMATIS — MAIN FUNCTION
 const importTrades = async (accountId, userId, options = {}) => {
   const { account, apiKey, apiSecret } = await getCredentials(accountId, userId)
+  const isMt = account.platform === 'mt4' || account.platform === 'mt5'
 
-  if (!apiKey || !apiSecret) {
+  if (!isMt && (!apiKey || !apiSecret)) {
     throw { status: 400, message: 'API Key tidak ditemukan. Reconnect akun terlebih dahulu.' }
+  }
+  if (isMt && !account.metadata?.metaApiAccountId) {
+    throw { status: 400, message: 'Akun MetaApi belum di-provision. Reconnect akun MT4/MT5 terlebih dahulu.' }
   }
 
   // Ambil service yang sesuai
   const service = exchanges.getService(account.platform)
 
-  // Fetch trades dari exchange
+  // Fetch trades dari exchange (atau dari MetaApi buat MT4/MT5)
   console.log(`[IMPORT] Fetching trades from ${account.platform}...`)
-  const fetched = await service.importAll(apiKey, apiSecret, {
-    sinceDate:      options.sinceDate || account.lastSyncAt,
-    symbols:        options.symbols,
-    includeFutures: options.includeFutures || false,
-  })
+  const fetched = isMt
+    ? await service.importAll(
+        { metaApiAccountId: account.metadata.metaApiAccountId, platform: account.platform },
+        { sinceDate: options.sinceDate || account.lastSyncAt },
+      )
+    : await service.importAll(apiKey, apiSecret, {
+        sinceDate:      options.sinceDate || account.lastSyncAt,
+        symbols:        options.symbols,
+        includeFutures: options.includeFutures || false,
+      })
 
   if (!fetched.trades || fetched.trades.length === 0) {
     await prisma.exchangeAccount.update({

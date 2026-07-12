@@ -20,6 +20,16 @@ router.post('/connect', [
     .optional().isString().isLength({ max: 500 }),
   body('apiSecret')
     .optional().isString().isLength({ max: 500 }),
+  // Khusus MT4/MT5 (via MetaApi): login, password (apiSecret), dan server broker wajib
+  body('loginNumber')
+    .if(body('platform').isIn(['mt4', 'mt5']))
+    .notEmpty().withMessage('Nomor login MT wajib diisi.'),
+  body('serverName')
+    .if(body('platform').isIn(['mt4', 'mt5']))
+    .notEmpty().withMessage('Nama server broker MT wajib diisi.'),
+  body('apiSecret')
+    .if(body('platform').isIn(['mt4', 'mt5']))
+    .notEmpty().withMessage('Password MT (investor password disarankan) wajib diisi.'),
 ], validate, ctrl.connectAccount)
 
 router.patch('/:id',           ctrl.updateAccount)
