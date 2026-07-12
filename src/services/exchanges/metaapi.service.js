@@ -14,7 +14,7 @@
 //  MetaApi account id di `metadata.metaApiAccountId`). `apiSecret` = password MT yang di-enkripsi.
 
 const { getApi } = require('../metaapi/metaapi.client')
-const { detectInstrumentType } = require('../metaapi/mt.parser')
+const { detectInstrumentType } = require('../mt/mt.parser')
 
 const DEAL_TYPE_BUY  = 'DEAL_TYPE_BUY'
 const DEAL_TYPE_SELL = 'DEAL_TYPE_SELL'
