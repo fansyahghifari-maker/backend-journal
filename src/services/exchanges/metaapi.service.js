@@ -81,7 +81,7 @@ const provisionAccount = async ({ loginNumber, password, serverName, platform, a
       const provisioningProfileId = await ensureProvisioningProfile(api, { serverName, platform })
       created = await api.metatraderAccountApi.createAccount({ ...payload, provisioningProfileId })
     } else {
-      throw { status: 400, message: `Gagal bikin akun MetaApi: ${err.message || 'unknown error'}` }
+      throw { status: 400, message: `Gagal bikin akun MetaApi: ${err.message || 'unknown error'} | Detail: ${msg || '(kosong)'}` }
     }
   }
 
