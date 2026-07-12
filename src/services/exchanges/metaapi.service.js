@@ -67,7 +67,7 @@ const provisionAccount = async ({ loginNumber, password, serverName, platform, a
     platform,
     magic:    0,
     manualTrades: true,
-    reliability: 'standard',
+    reliability: 'regular',
     application: 'MetaApi',
   }
 
