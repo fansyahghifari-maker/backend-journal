@@ -1,79 +1,88 @@
-const crypto = require('crypto')
+const ccxt = require('ccxt')
 
-const BASE_SPOT    = 'https://api.binance.com'
-const BASE_FUTURES = 'https://fapi.binance.com'
-
-// HELPER: sign request
-const sign = (qs, secret) =>
-  crypto.createHmac('sha256', secret).update(qs).digest('hex')
-
-// HELPER: authenticated fetch
-const authFetch = async (baseUrl, endpoint, params, apiKey, apiSecret) => {
-  const ts  = Date.now()
-  const qs  = new URLSearchParams({ ...params, timestamp: ts }).toString()
-  const sig = sign(qs, apiSecret)
-  const res = await fetch(`${baseUrl}${endpoint}?${qs}&signature=${sig}`, {
-    headers: { 'X-MBX-APIKEY': apiKey },
+// ─── HELPER: buat client ccxt ────────────────────────────────────────────────
+// futures = true -> pakai defaultType 'future' (Binance USD-M Futures)
+const makeClient = (apiKey, apiSecret, { futures = false } = {}) => {
+  return new ccxt.binance({
+    apiKey,
+    secret: apiSecret,
+    enableRateLimit: true, // ccxt otomatis atur delay antar request sesuai limit exchange
+    options: { defaultType: futures ? 'future' : 'spot' },
   })
-  const data = await res.json()
-  if (!res.ok) throw { status: 400, message: `Binance error: ${data.msg || JSON.stringify(data)}` }
-  return data
 }
+
+// HELPER: convert 'BTCUSDT' -> 'BTC/USDT' (ccxt pakai unified symbol pakai slash)
+const QUOTES = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'BTC', 'ETH', 'BNB', 'IDR', 'TRY', 'EUR', 'GBP']
+const toCcxtSymbol = (raw) => {
+  const s = raw.toUpperCase()
+  if (s.includes('/')) return s
+  const quote = QUOTES.find(q => s.endsWith(q) && s.length > q.length)
+  if (!quote) throw { status: 400, message: `Simbol "${raw}" tidak dikenali` }
+  return `${s.slice(0, s.length - quote.length)}/${quote}`
+}
+const fromCcxtSymbol = (symbol) => symbol.replace('/', '').replace(/:.*$/, '') // buang :USDT suffix futures kalau ada
 
 //  TEST CONNECTION
 const testConnection = async (apiKey, apiSecret) => {
-  const data = await authFetch(BASE_SPOT, '/api/v3/account', {}, apiKey, apiSecret)
+  const client = makeClient(apiKey, apiSecret)
+  try {
+    const balance = await client.fetchBalance()
 
-  const balances = data.balances
-    .filter(b => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0)
-    .map(b => ({ asset: b.asset, free: parseFloat(b.free), locked: parseFloat(b.locked) }))
+    const balances = Object.keys(balance.total || {})
+      .filter(asset => (balance.total[asset] || 0) > 0)
+      .map(asset => ({
+        asset,
+        free:   balance.free?.[asset]  || 0,
+        locked: balance.used?.[asset]  || 0,
+      }))
 
-  return {
-    success:     true,
-    message:     'Koneksi Binance berhasil!',
-    accountType: data.accountType,
-    canTrade:    data.canTrade,
-    balances:    balances.slice(0, 10),
-    totalAssets: balances.length,
+    return {
+      success:     true,
+      message:     'Koneksi Binance berhasil!',
+      accountType: balance.info?.accountType,
+      canTrade:    balance.info?.canTrade,
+      balances:    balances.slice(0, 10),
+      totalAssets: balances.length,
+    }
+  } catch (err) {
+    throw { status: 400, message: `Binance error: ${err.message}` }
   }
 }
 
 // ─── SPOT ────────────────────────────────────────────────────────────────────
-// Binance Spot: startTime-endTime max 24 JAM per request
+// Binance Spot: startTime-endTime max 24 JAM per request kalau pakai range
 // Kita loop per hari untuk cover range panjang
 const fetchSpotTrades = async (apiKey, apiSecret, symbol, options = {}) => {
   const { limit = 1000, startTime, endTime } = options
+  const client       = makeClient(apiKey, apiSecret)
+  const ccxtSymbol   = toCcxtSymbol(symbol)
 
-  // Kalau tidak ada range waktu, langsung fetch (dapat 500 trade terbaru)
+  // Kalau tidak ada range waktu, langsung fetch (dapat trade terbaru)
   if (!startTime) {
-    const params = { symbol: symbol.toUpperCase(), limit }
-    const trades = await authFetch(BASE_SPOT, '/api/v3/myTrades', params, apiKey, apiSecret)
-    return mapSpotTrades(trades)
+    try {
+      const trades = await client.fetchMyTrades(ccxtSymbol, undefined, limit)
+      return mapSpotTrades(trades)
+    } catch (err) {
+      throw { status: 400, message: `Binance error: ${err.message}` }
+    }
   }
 
-  // Loop per 24 jam (Binance limit)
-  const MS_24H   = 24 * 60 * 60 * 1000
-  const rangeEnd = endTime || Date.now()
-  let cursor     = startTime
+  // Loop per 24 jam (batasan Binance untuk query startTime+endTime)
+  const MS_24H    = 24 * 60 * 60 * 1000
+  const rangeEnd  = endTime || Date.now()
+  let cursor      = startTime
   const allTrades = []
 
   while (cursor < rangeEnd) {
     const chunkEnd = Math.min(cursor + MS_24H - 1, rangeEnd)
-    const params   = {
-      symbol:    symbol.toUpperCase(),
-      limit:     1000,
-      startTime: cursor,
-      endTime:   chunkEnd,
-    }
     try {
-      const trades = await authFetch(BASE_SPOT, '/api/v3/myTrades', params, apiKey, apiSecret)
+      const trades = await client.fetchMyTrades(ccxtSymbol, cursor, 1000, { endTime: chunkEnd })
       allTrades.push(...trades)
     } catch (err) {
-      // Log tapi jangan stop loop
       console.warn(`[SPOT] chunk ${new Date(cursor).toISOString()} error: ${err.message}`)
     }
     cursor = chunkEnd + 1
-    await new Promise(r => setTimeout(r, 200)) // rate limit delay
+    // enableRateLimit di ccxt sudah handle delay, tidak perlu setTimeout manual
   }
 
   return mapSpotTrades(allTrades)
@@ -81,29 +90,32 @@ const fetchSpotTrades = async (apiKey, apiSecret, symbol, options = {}) => {
 
 const mapSpotTrades = (trades) => trades.map(t => ({
   externalTradeId: `BNC-SPOT-${t.id}`,
-  symbol:          t.symbol,
+  symbol:          fromCcxtSymbol(t.symbol),
   instrumentType:  'crypto',
-  tradeType:       t.isBuyer ? 'buy' : 'sell',
-  entryPrice:      parseFloat(t.price),
+  tradeType:       t.side, // 'buy' | 'sell'
+  entryPrice:      t.price,
   exitPrice:       null,
-  quantity:        parseFloat(t.qty),
-  commission:      parseFloat(t.commission),
-  commissionAsset: t.commissionAsset,
-  tradeDate:       new Date(t.time).toISOString(),
-  isMaker:         t.isMaker,
+  quantity:        t.amount,
+  commission:      t.fee?.cost || 0,
+  commissionAsset: t.fee?.currency,
+  tradeDate:       new Date(t.timestamp).toISOString(),
+  isMaker:         t.takerOrMaker === 'maker',
   exchange:        'Binance Spot',
-  raw:             t,
+  raw:             t.info,
 }))
 
 // ─── FUTURES ─────────────────────────────────────────────────────────────────
-// Binance Futures: 
+// Binance Futures:
 //   - Hanya bisa query 6 BULAN terakhir
 //   - startTime-endTime max 7 HARI per request
-//   - Kalau tidak ada range: dapat 7 hari terakhir
+//   - Kalau tidak ada range: dapat trade terbaru
 const fetchFuturesTrades = async (apiKey, apiSecret, symbol, options = {}) => {
   const MS_6_MONTHS = 6 * 30 * 24 * 60 * 60 * 1000
   const MS_7_DAYS   = 7  * 24 * 60 * 60 * 1000
   const now         = Date.now()
+
+  const client     = makeClient(apiKey, apiSecret, { futures: true })
+  const ccxtSymbol = toCcxtSymbol(symbol)
 
   // Clamp startTime — Binance hanya support 6 bulan terakhir
   let startTime = options.startTime
@@ -119,20 +131,13 @@ const fetchFuturesTrades = async (apiKey, apiSecret, symbol, options = {}) => {
   // Loop per 7 hari
   while (cursor < rangeEnd) {
     const chunkEnd = Math.min(cursor + MS_7_DAYS - 1, rangeEnd)
-    const params   = {
-      symbol:    symbol.toUpperCase(),
-      limit:     1000,
-      startTime: cursor,
-      endTime:   chunkEnd,
-    }
     try {
-      const trades = await authFetch(BASE_FUTURES, '/fapi/v1/userTrades', params, apiKey, apiSecret)
+      const trades = await client.fetchMyTrades(ccxtSymbol, cursor, 1000, { endTime: chunkEnd })
       allTrades.push(...trades)
     } catch (err) {
       console.warn(`[FUTURES] chunk ${new Date(cursor).toISOString()} error: ${err.message}`)
     }
     cursor = chunkEnd + 1
-    await new Promise(r => setTimeout(r, 200))
   }
 
   return mapFuturesTrades(allTrades)
@@ -140,39 +145,39 @@ const fetchFuturesTrades = async (apiKey, apiSecret, symbol, options = {}) => {
 
 const mapFuturesTrades = (trades) => trades.map(t => ({
   externalTradeId: `BNC-FUT-${t.id}`,
-  symbol:          t.symbol,
+  symbol:          fromCcxtSymbol(t.symbol),
   instrumentType:  'crypto_futures',
-  tradeType:       t.side === 'BUY' ? 'long' : 'short',
-  entryPrice:      parseFloat(t.price),
+  tradeType:       t.side === 'buy' ? 'long' : 'short',
+  entryPrice:      t.price,
   exitPrice:       null,
-  quantity:        parseFloat(t.qty),
-  realizedPnl:     parseFloat(t.realizedPnl),
-  commission:      parseFloat(t.commission),
-  tradeDate:       new Date(t.time).toISOString(),
-  positionSide:    t.positionSide, // BOTH / LONG / SHORT (hedge mode)
+  quantity:        t.amount,
+  realizedPnl:     parseFloat(t.info?.realizedPnl || 0),
+  commission:      t.fee?.cost || 0,
+  tradeDate:       new Date(t.timestamp).toISOString(),
+  positionSide:    t.info?.positionSide, // BOTH / LONG / SHORT (hedge mode)
   exchange:        'Binance Futures',
-  raw:             t,
+  raw:             t.info,
 }))
 
 // ─── AUTO-DETECT TRADED SYMBOLS ──────────────────────────────────────────────
-const detectTradedSymbols = async (apiKey, apiSecret) => {
-  const popularPairs = [
-    'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
-    'ADAUSDT','DOGEUSDT','MATICUSDT','DOTUSDT','AVAXUSDT',
-    'SHIBUSDT','LTCUSDT','LINKUSDT','UNIUSDT','ATOMUSDT',
-    'NEARUSDT','ALGOUSDT','FILUSDT','TRXUSDT','ETCUSDT',
-    'WLDUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT',
-    'APTUSDT','TIAUSDT','SEIUSDT','STXUSDT','RUNEUSDT',
-  ]
+const POPULAR_PAIRS = [
+  'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
+  'ADAUSDT','DOGEUSDT','MATICUSDT','DOTUSDT','AVAXUSDT',
+  'SHIBUSDT','LTCUSDT','LINKUSDT','UNIUSDT','ATOMUSDT',
+  'NEARUSDT','ALGOUSDT','FILUSDT','TRXUSDT','ETCUSDT',
+  'WLDUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT',
+  'APTUSDT','TIAUSDT','SEIUSDT','STXUSDT','RUNEUSDT',
+]
 
+const detectTradedSymbols = async (apiKey, apiSecret) => {
+  const client = makeClient(apiKey, apiSecret)
   const traded = []
-  for (const sym of popularPairs) {
+
+  for (const sym of POPULAR_PAIRS) {
     try {
-      const trades = await authFetch(BASE_SPOT, '/api/v3/myTrades',
-        { symbol: sym, limit: 1 }, apiKey, apiSecret)
+      const trades = await client.fetchMyTrades(toCcxtSymbol(sym), undefined, 1)
       if (trades.length > 0) traded.push(sym)
     } catch {}
-    await new Promise(r => setTimeout(r, 150))
   }
 
   return traded
@@ -180,17 +185,14 @@ const detectTradedSymbols = async (apiKey, apiSecret) => {
 
 // Auto-detect untuk futures — cek dari account positions
 const detectFuturesSymbols = async (apiKey, apiSecret) => {
+  const client = makeClient(apiKey, apiSecret, { futures: true })
   try {
-    // Ambil semua position dari account (termasuk yang sudah closed tapi masih punya history)
-    const account = await authFetch(BASE_FUTURES, '/fapi/v2/account', {}, apiKey, apiSecret)
-    const positions = account.positions || []
-    // Ambil symbol yang pernah punya entry price (pernah di-trade)
+    const positions = await client.fetchPositions()
     return positions
-      .filter(p => parseFloat(p.entryPrice) > 0 || parseFloat(p.positionAmt) !== 0)
-      .map(p => p.symbol)
+      .filter(p => (p.contracts && p.contracts > 0) || (p.entryPrice && p.entryPrice > 0))
+      .map(p => fromCcxtSymbol(p.symbol))
   } catch (err) {
     console.warn('[FUTURES] detectFuturesSymbols gagal, pakai popular list:', err.message)
-    // Fallback ke popular list
     return ['BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
             'ADAUSDT','DOGEUSDT','LINKUSDT','AVAXUSDT','ARBUSDT']
   }
@@ -216,12 +218,10 @@ const importAll = async (apiKey, apiSecret, options = {}) => {
     } catch (err) {
       result.errors.push({ symbol, type: 'spot', error: err.message })
     }
-    // delay sudah ada di dalam fetchSpotTrades
   }
 
   // ── FUTURES ──
   if (includeFutures) {
-    // Kalau user tidak kasih symbols khusus, auto-detect dari account futures
     let futSymbols = symbols?.length > 0
       ? symbols
       : await detectFuturesSymbols(apiKey, apiSecret)

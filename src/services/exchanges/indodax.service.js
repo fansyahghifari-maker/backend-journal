@@ -1,107 +1,118 @@
-const crypto = require('crypto')
+const ccxt = require('ccxt')
 
-const BASE_URL    = 'https://indodax.com'
-const BASE_PUBLIC = 'https://indodax.com/api'
+// ─── HELPER: buat client ccxt ────────────────────────────────────────────────
+const makeClient = (apiKey, apiSecret) => new ccxt.indodax({
+  apiKey,
+  secret: apiSecret,
+  enableRateLimit: true,
+})
 
-// HELPER: signed POST request
-const indodaxPost = async (method, params, apiKey, apiSecret) => {
-  const nonce     = Date.now()
-  const body      = new URLSearchParams({ method, nonce, ...params }).toString()
-  const signature = crypto.createHmac('sha512', apiSecret).update(body).digest('hex')
-
-  const res = await fetch(`${BASE_URL}/tapi`, {
-    method:  'POST',
-    headers: {
-      'Key':          apiKey,
-      'Sign':         signature,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body,
-  })
-
-  const data = await res.json()
-  if (!data.success) throw { status: 400, message: `Indodax: ${data.error || 'Request gagal'}` }
-  return data.return
+// HELPER: convert 'btc_idr' -> 'BTC/IDR'
+const toCcxtSymbol = (pair) => {
+  if (pair.includes('/')) return pair.toUpperCase()
+  const [base, quote] = pair.split('_')
+  if (!base || !quote) throw { status: 400, message: `Pair "${pair}" tidak valid, pakai format base_quote (mis. btc_idr)` }
+  return `${base.toUpperCase()}/${quote.toUpperCase()}`
 }
+const fromCcxtSymbol = (symbol) => symbol.replace('/', '') // 'BTC/IDR' -> 'BTCIDR'
 
 //  TEST CONNECTION + GET ACCOUNT INFO
 const testConnection = async (apiKey, apiSecret) => {
-  const data = await indodaxPost('getInfo', {}, apiKey, apiSecret)
+  const client = makeClient(apiKey, apiSecret)
+  try {
+    const balance = await client.fetchBalance()
 
-  // Ambil balance yang tidak nol
-  const balances = Object.entries(data.balance || {})
-    .filter(([, v]) => parseFloat(v) > 0)
-    .map(([asset, amount]) => ({ asset: asset.toUpperCase(), amount: parseFloat(amount) }))
+    const balances = Object.keys(balance.total || {})
+      .filter(asset => (balance.total[asset] || 0) > 0)
+      .map(asset => ({ asset: asset.toUpperCase(), amount: balance.total[asset] }))
 
-  return {
-    success:       true,
-    message:       'Koneksi Indodax berhasil!',
-    userId:        data.user_id,
-    email:         data.email,
-    balances:      balances.slice(0, 10),
-    totalAssets:   balances.length,
-    serverTime:    new Date(data.server_time * 1000).toISOString(),
+    return {
+      success:     true,
+      message:     'Koneksi Indodax berhasil!',
+      userId:      balance.info?.return?.user_id,
+      email:       balance.info?.return?.email,
+      balances:    balances.slice(0, 10),
+      totalAssets: balances.length,
+      serverTime:  balance.info?.return?.server_time
+        ? new Date(balance.info.return.server_time * 1000).toISOString()
+        : new Date().toISOString(),
+    }
+  } catch (err) {
+    throw { status: 400, message: `Indodax: ${err.message}` }
   }
 }
 
 //  FETCH TRADE HISTORY
 const fetchTradeHistory = async (apiKey, apiSecret, pair, options = {}) => {
   const { count = 100, startTime, endTime } = options
-  const params = { pair: pair.toLowerCase(), count }
-  if (startTime) params.since = Math.floor(new Date(startTime).getTime() / 1000)
-  if (endTime)   params.end   = Math.floor(new Date(endTime).getTime() / 1000)
+  const client     = makeClient(apiKey, apiSecret)
+  const ccxtSymbol = toCcxtSymbol(pair)
+  const since      = startTime ? new Date(startTime).getTime() : undefined
 
-  const data = await indodaxPost('tradeHistory', params, apiKey, apiSecret)
+  try {
+    const params = {}
+    if (endTime) params.end = Math.floor(new Date(endTime).getTime() / 1000)
 
-  const trades = data.trades || []
-  return trades.map(t => ({
-    externalTradeId: `IDX-${t.trade_id}`,
-    symbol:          pair.toUpperCase().replace('_', ''),
-    instrumentType:  'crypto',
-    tradeType:       t.type === 'buy' ? 'buy' : 'sell',
-    entryPrice:      parseFloat(t.price),
-    exitPrice:       null,
-    quantity:        parseFloat(t.amount),
-    commission:      parseFloat(t.fee) || 0,
-    tradeDate:       new Date(t.trade_time * 1000).toISOString(),
-    exchange:        'Indodax',
-    quoteCurrency:   pair.split('_')[1]?.toUpperCase() || 'IDR',
-    raw:             t,
-  }))
+    const trades = await client.fetchMyTrades(ccxtSymbol, since, count, params)
+
+    return trades.map(t => ({
+      externalTradeId: `IDX-${t.id}`,
+      symbol:          fromCcxtSymbol(t.symbol),
+      instrumentType:  'crypto',
+      tradeType:       t.side, // 'buy' | 'sell'
+      entryPrice:      t.price,
+      exitPrice:       null,
+      quantity:        t.amount,
+      commission:      t.fee?.cost || 0,
+      tradeDate:       new Date(t.timestamp).toISOString(),
+      exchange:        'Indodax',
+      quoteCurrency:   ccxtSymbol.split('/')[1],
+      raw:             t.info,
+    }))
+  } catch (err) {
+    throw { status: 400, message: `Indodax: ${err.message}` }
+  }
 }
 
-//  GET AVAILABLE PAIRS
+//  GET AVAILABLE PAIRS (public, tidak perlu API key)
 const getAvailablePairs = async () => {
-  const res  = await fetch(`${BASE_PUBLIC}/pairs`)
-  const data = await res.json()
-  return data.map(p => ({
-    id:          p.id,
-    symbol:      p.id.toUpperCase(),
-    description: p.description,
-    baseAsset:   p.base_currency.toUpperCase(),
-    quoteAsset:  p.traded_currency.toUpperCase(),
-    minPrice:    p.trade_min_base_currency,
-    minAmount:   p.trade_min_traded_currency,
+  const client = new ccxt.indodax({ enableRateLimit: true })
+  const markets = await client.loadMarkets()
+
+  return Object.values(markets).map(m => ({
+    id:          m.id,
+    symbol:      fromCcxtSymbol(m.symbol),
+    description: `${m.base}/${m.quote}`,
+    baseAsset:   m.base,
+    quoteAsset:  m.quote,
+    minPrice:    m.limits?.price?.min,
+    minAmount:   m.limits?.amount?.min,
   }))
 }
 
 //  FETCH OPEN ORDERS
 const fetchOpenOrders = async (apiKey, apiSecret, pair) => {
-  const data   = await indodaxPost('openOrders', { pair: pair.toLowerCase() }, apiKey, apiSecret)
-  const orders = data.orders || []
+  const client     = makeClient(apiKey, apiSecret)
+  const ccxtSymbol = toCcxtSymbol(pair)
 
-  return orders.map(o => ({
-    externalTradeId: `IDX-ORD-${o.order_id}`,
-    symbol:          pair.toUpperCase().replace('_', ''),
-    instrumentType:  'crypto',
-    tradeType:       o.type === 'buy' ? 'buy' : 'sell',
-    entryPrice:      parseFloat(o.price),
-    quantity:        parseFloat(o.remain_amount),
-    status:          'open',
-    tradeDate:       new Date(o.submit_time * 1000).toISOString(),
-    exchange:        'Indodax',
-    raw:             o,
-  }))
+  try {
+    const orders = await client.fetchOpenOrders(ccxtSymbol)
+
+    return orders.map(o => ({
+      externalTradeId: `IDX-ORD-${o.id}`,
+      symbol:          fromCcxtSymbol(ccxtSymbol),
+      instrumentType:  'crypto',
+      tradeType:       o.side,
+      entryPrice:      o.price,
+      quantity:        o.remaining,
+      status:          'open',
+      tradeDate:       new Date(o.timestamp).toISOString(),
+      exchange:        'Indodax',
+      raw:             o.info,
+    }))
+  } catch (err) {
+    throw { status: 400, message: `Indodax: ${err.message}` }
+  }
 }
 
 //  IMPORT ALL TRADES dari semua pair
@@ -130,7 +141,6 @@ const importAll = async (apiKey, apiSecret, options = {}) => {
         errors.push({ pair, error: err.message })
       }
     }
-    await new Promise(r => setTimeout(r, 300)) // delay untuk rate limit Indodax
   }
 
   return {
